@@ -504,6 +504,25 @@ static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static int modem_added(sd_bus_message *message, void *userdata,
+                       sd_bus_error *error) {
+        const char *object_path;
+        int r;
+
+        assert(message);
+
+        r = sd_bus_message_read(message, "o", &object_path);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return r;
+        }
+
+        log_error("------------------------------------------ ModemManager added: %s",
+                  object_path);
+
+        return 0;
+}
+
 static int modem_removed(sd_bus_message *message, void *userdata,
                                 sd_bus_error *error) {
         const char *object_path;
@@ -530,6 +549,12 @@ int manager_match_modemmanager_signals(Manager *manager) {
                 "path_namespace='/org/freedesktop/DBus',"
                 "interface='org.freedesktop.DBus',"
                 "member='NameOwnerChanged'";
+        static const char *expr_iface_added =
+                "type='signal',"
+                "sender='org.freedesktop.ModemManager1',"
+                "path_namespace='/org/freedesktop/ModemManager1',"
+                "interface='org.freedesktop.DBus.ObjectManager',"
+                "member='InterfacesAdded'";
         static const char *expr_iface_removed =
                 "type='signal',"
                 "sender='org.freedesktop.ModemManager1',"
@@ -546,10 +571,15 @@ int manager_match_modemmanager_signals(Manager *manager) {
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
 
+        r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_added,
+                                   modem_added, NULL, manager);
+        if (r < 0)
+                return log_error_errno(r, "Failed to request signal for IntefaceAdded");
+
         r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_removed,
                                    modem_removed, NULL, manager);
         if (r < 0)
-                return log_error_errno(r, "Failed to request signal for IntefaceAdded");
+                return log_error_errno(r, "Failed to request signal for IntefaceRemoved");
 
         return 0;
 }
