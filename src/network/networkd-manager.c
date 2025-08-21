@@ -160,11 +160,7 @@ static int manager_connect_bus(Manager *m) {
         if (r < 0)
                 log_warning_errno(r, "Failed to request match for PrepareForSleep, ignoring: %m");
 
-        r = manager_match_bearers_signal(m);
-        if (r < 0)
-                return r;
-
-        r = manager_watch_modemmanager_signal(m);
+        r = manager_match_modemmanager_signals(m);
         if (r < 0)
                 return r;
 

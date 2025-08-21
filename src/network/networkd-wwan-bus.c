@@ -18,6 +18,13 @@ typedef enum {
     MM_BEARER_IP_FAMILY_ANY     = 0xFFFFFFFF
 } MMBearerIpFamily;
 
+typedef enum {
+    MM_BEARER_TYPE_UNKNOWN        = 0,
+    MM_BEARER_TYPE_DEFAULT        = 1,
+    MM_BEARER_TYPE_DEFAULT_ATTACH = 2,
+    MM_BEARER_TYPE_DEDICATED      = 3
+} MMBearerType;
+
 static int map_name(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
         Bearer *b = ASSERT_PTR(userdata);
         const char *s;
@@ -37,7 +44,6 @@ static int map_name(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_e
         if (b->name && strlen(b->name))
                 return 0;
 
-        log_error("%s:%d %s name \"%s\"\n", __FILE__, __LINE__, __func__, b->name);
         return bearer_set_name(b, s);
 }
 
@@ -139,12 +145,10 @@ static int map_ip_type(sd_bus *bus, const char *member, sd_bus_message *m, sd_bu
         assert(m);
 
 
-        log_error("%s GET ip type from message", __func__);
         r = sd_bus_message_read_basic(m, 'u', &u);
         if (r < 0)
                 return r;
 
-        log_error("%s ip type from message %u", __func__, u);
         switch (u) {
         case MM_BEARER_IP_FAMILY_NONE:
                 *ip_type = ADDRESS_FAMILY_NO;
@@ -170,7 +174,6 @@ static int map_properties(sd_bus *bus, const char *member, sd_bus_message *m, sd
                 {}
         };
 
-        log_error("%s", __func__);
         return bus_message_map_all_properties(m, map, BUS_MAP_STRDUP, error, userdata);
 }
 
@@ -262,7 +265,6 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
                                b->path, bus_error_message(e, r));
 
                 bearer_drop(b);
-                log_error("%s:%d drop manager %p\n", __FILE__, __LINE__, b->manager);
                 return 0;
         }
 
@@ -286,11 +288,14 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of bearer \"%s\": %s", b->path, bus_error_message(ret_error, r));
 
-        #define MM_BEARER_TYPE_DEFAULT_ATTACH 2
+        /*
+         * aleksander0m: You should ignore those bearers with type
+         * default-attach and without any interface reported.
+         */
         if (b->type == MM_BEARER_TYPE_DEFAULT_ATTACH)
-                return log_warning_errno(-EINVAL, "Skip MM_BEARER_TYPE_DEFAULT_ATTACH \"%s\"", b->path);
+                return log_warning_errno(-EINVAL, "Skip Bearer of type MM_BEARER_TYPE_DEFAULT_ATTACH \"%s\"", b->path);
 
-        log_error("\n\nXXX wwan: Connected: %d Iface %s Manager %p\n\n", b->connected, b->name, b->manager);
+        log_error("Connected: %d interface %s", b->connected, b->name);
         return bearer_update_link(b);
 }
 
@@ -303,9 +308,6 @@ static int bearer_initialize(Bearer *b) {
         assert(b->path);
 
         b->slot = sd_bus_slot_unref(b->slot);
-
-        log_error("XXX ------------- %s:%d path %s\n",
-                  __FILE__, __LINE__, b->path);
 
         r = sd_bus_call_method_async(
                         b->manager->bus,
@@ -331,7 +333,6 @@ static int bearer_new_and_initialize(Manager *manager, const char *path) {
         assert(path);
 
         r = bearer_new(manager, path, &b);
-        log_error("New manager at %s ptr %p\n", path, manager);
         if (r < 0)
                 return log_warning_errno(r, "Failed to allocate new bearer \"%s\": %m", path);
 
@@ -349,7 +350,8 @@ static int bearer_save_path(const char *path, void *userdata) {
         return set_put_strdup(set, path);
 }
 
-static int enumerate_bearer_handler(sd_bus_message *message, void *userdata, sd_bus_error *ret_error) {
+static int enumerate_bearer_handler(sd_bus_message *message, void *userdata,
+                                    sd_bus_error *ret_error) {
         static const XMLIntrospectOps ops = {
                 .on_path = bearer_save_path,
         };
@@ -396,7 +398,7 @@ static int enumerate_bearer_handler(sd_bus_message *message, void *userdata, sd_
         return 0;
 }
 
-int manager_enumerate_bearers(Manager *manager) {
+static int enumerate_bearers(Manager *manager) {
         int r;
 
         log_error("%s", __func__);
@@ -419,7 +421,9 @@ int manager_enumerate_bearers(Manager *manager) {
         return 0;
 }
 
-static int bearer_properties_changed_handler(sd_bus_message *message, void *userdata, sd_bus_error *error) {
+static int bearer_properties_changed_handler(sd_bus_message *message,
+                                             void *userdata,
+                                             sd_bus_error *error) {
         Manager *manager = ASSERT_PTR(userdata);
         const char *path;
         Bearer *b;
@@ -429,8 +433,6 @@ static int bearer_properties_changed_handler(sd_bus_message *message, void *user
         path = sd_bus_message_get_path(message);
         if (!path)
                 return 0;
-
-        log_error("%s:%d %s path %s\n", __FILE__, __LINE__, __func__, path);
 
         if (streq(path, "/org/freedesktop/ModemManager1/Bearer"))
                 return 0;
@@ -451,7 +453,7 @@ static int bearer_properties_changed_handler(sd_bus_message *message, void *user
         return 0;
 }
 
-int manager_match_bearers_signal(Manager *manager) {
+static int bearer_signals(Manager *manager) {
         static const char *expression =
                 "type='signal',"
                 "sender='org.freedesktop.ModemManager1',"
@@ -463,15 +465,17 @@ int manager_match_bearers_signal(Manager *manager) {
         assert(manager);
         assert(manager->bus);
 
-        r = sd_bus_add_match_async(manager->bus, NULL, expression, bearer_properties_changed_handler, NULL, manager);
+        r = sd_bus_add_match_async(manager->bus, NULL, expression,
+                                   bearer_properties_changed_handler, NULL,
+                                   manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request match for PropertiesChanged in ModemManager bearers: %m");
 
         return 0;
 }
 
-static int modemmanager_reinit(sd_bus_message *message, void *userdata, sd_bus_error *error) {
-        Manager *manager = ASSERT_PTR(userdata);
+static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
+                                        sd_bus_error *error) {
         const char *name;
         const char *new_owner;
         int r;
@@ -484,25 +488,21 @@ static int modemmanager_reinit(sd_bus_message *message, void *userdata, sd_bus_e
                 return 0;
         }
 
-        log_error("name: %s", name);
-
         if (!streq(name, "org.freedesktop.ModemManager1"))
                 return 0;
 
         if (strlen(new_owner)) {
                 log_error("------------------------------------------ ModemManager alive");
-                r = manager_enumerate_bearers(manager);
-                //r = manager_on_mm_connect(manager);
+                /* Enumerate and create all bearers */
         } else {
                 log_error("------------------------------------------ ModemManager dead");
-                //bus_match_remove(manager->bus, bearer_properties_changed_handler);
-                r = manager_on_mm_disconnect(manager);
+                /* Remove all bearers */
         }
 
         return 0;
 }
 
-int manager_watch_modemmanager_signal(Manager *manager) {
+int manager_match_modemmanager_signals(Manager *manager) {
         static const char *expression =
                 "type='signal',"
                 "sender='org.freedesktop.DBus',"
@@ -515,9 +515,15 @@ int manager_watch_modemmanager_signal(Manager *manager) {
         assert(manager->bus);
 
         r = sd_bus_add_match_async(manager->bus, NULL, expression,
-                                   modemmanager_reinit, NULL, manager);
+                                   modemmanager_service_changed, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
 
         return 0;
+}
+
+int manager_enumerate_bearers(Manager *manager) {
+    /* Called on D-Bus connected */
+    log_error("------------------------------------------ D-Bus connected");
+    return 0;
 }

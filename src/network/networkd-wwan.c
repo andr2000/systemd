@@ -262,7 +262,6 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
         if (prefsrc)
                 route->prefsrc = *prefsrc;
 
-        log_route_debug(route, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", link->manager);
         if (route_get(link->manager, route, &existing) < 0) /* This is a new route. */
 
                 link->bearer_configured = false;
@@ -285,7 +284,6 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
 
         assert(link);
 
-        log_error("%s link->state %d b is %p", __func__, link->state, b);
         if (!IN_SET(link->state, LINK_STATE_CONFIGURING, LINK_STATE_CONFIGURED)) {
                 return 0;
         }
@@ -296,7 +294,6 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
                         continue;
 
                 address_mark(address);
-                log_address_debug(address, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", link);
         }
 
         SET_FOREACH(route, link->manager->routes) {
@@ -304,16 +301,9 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
                         continue;
 
                 route_mark(route);
-                log_route_debug(route, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", link->manager);
         }
 
-
-        if (b)
-                log_error("%s connected %d method %u ip_type %d\n", __func__,
-                          b->connected, b->ip4_method, b->ip_type);
-
         if (b && FLAGS_SET(b->ip_type, ADDRESS_FAMILY_IPV4)) {
-                log_error("%s ipv4 method %u", __func__, b->ip4_method);
                 if (b->connected && b->ip4_method == MM_BEARER_IP_METHOD_STATIC) {
                         r = link_request_bearer_address(link, AF_INET, &b->ip4_address, b->ip4_prefixlen);
                         if (r < 0)
@@ -332,7 +322,6 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
                         if (r < 0)
                                 return log_link_warning_errno(link, r, "Failed to start DHCPv4 client: %m");
                 } else {
-                        log_error("GGGGGGGGGGGGGGGGGGGGGGGGGG stop DHCP client");
                         r = sd_dhcp_client_stop(link->dhcp_client);
                         if (r < 0)
                                 ret = log_link_warning_errno(link, r, "Could not stop DHCPv4 client: %m");
