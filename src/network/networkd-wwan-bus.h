@@ -3,5 +3,5 @@
 
 typedef struct Manager Manager;
 
-int manager_enumerate_bearers(Manager *manager);
+int manager_notify_mm_bus_connected(Manager *manager);
 int manager_match_modemmanager_signals(Manager *manager);

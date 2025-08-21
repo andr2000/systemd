@@ -522,7 +522,7 @@ int manager_match_modemmanager_signals(Manager *manager) {
         return 0;
 }
 
-int manager_enumerate_bearers(Manager *manager) {
+int manager_notify_mm_bus_connected(Manager *manager) {
     /* Called on D-Bus connected */
     log_error("------------------------------------------ D-Bus connected");
     return 0;

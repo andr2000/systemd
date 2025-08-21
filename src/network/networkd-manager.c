@@ -109,7 +109,7 @@ static int on_connected(sd_bus_message *message, void *userdata, sd_bus_error *r
         if (m->product_uuid_requested)
                 (void) manager_request_product_uuid(m);
 
-        (void) manager_enumerate_bearers(m);
+        (void) manager_notify_mm_bus_connected(m);
 
         return 0;
 }
