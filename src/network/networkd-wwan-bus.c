@@ -522,8 +522,55 @@ int manager_match_modemmanager_signals(Manager *manager) {
         return 0;
 }
 
-int manager_notify_mm_bus_connected(Manager *manager) {
-    /* Called on D-Bus connected */
-    log_error("------------------------------------------ D-Bus connected");
-    return 0;
+static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_error *ret_error) {
+        Manager *m = ASSERT_PTR(userdata);
+        char **names = NULL;
+        char **p;
+        int r;
+        bool found;
+
+        assert(message);
+
+        m->slot = sd_bus_slot_unref(m->slot);
+
+        r = sd_bus_message_read_strv(message, &names);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        found = false;
+        for (p = names; *p != NULL; p++) {
+                if (streq(*p, "org.freedesktop.ModemManager1")) {
+                        found = true;
+                }
+        }
+
+        /* If not found then wait for NameOwnerChanged signal */
+        if (!found)
+                return 0;
+
+        log_info("wwan: ModemManager is available");
+        return 0;
+}
+
+int manager_notify_mm_bus_connected(Manager *m) {
+        int r;
+
+        /*
+         * Called on D-Bus connected.
+         * Check if ModemManager is available. If it is then initialize.
+         * If not then wait for the serivce to be available.
+         */
+        assert(m);
+        assert(sd_bus_is_ready(m->bus) > 0);
+
+        r = sd_bus_call_method_async(m->bus, &m->slot,
+                                 "org.freedesktop.DBus",
+                                 "/org/freedesktop/DBus",
+                                 "org.freedesktop.DBus",
+                                 "ListNames",
+                                 listnames_handler, m, NULL, NULL);
+        if (r < 0)
+            return log_warning_errno(r, "Could not LsitNames: %m");
+
+        return 0;
 }

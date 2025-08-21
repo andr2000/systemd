@@ -733,6 +733,7 @@ Manager* manager_free(Manager *m) {
 
         manager_varlink_done(m);
         hashmap_free(m->polkit_registry);
+        sd_bus_slot_unref(m->slot);
         sd_bus_flush_close_unref(m->bus);
 
         free(m->dynamic_timezone);
