@@ -164,6 +164,10 @@ static int manager_connect_bus(Manager *m) {
         if (r < 0)
                 return r;
 
+        r = manager_watch_modemmanager_signal(m);
+        if (r < 0)
+                return r;
+
         return 0;
 }
 

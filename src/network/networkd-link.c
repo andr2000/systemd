@@ -536,7 +536,7 @@ void link_check_ready(Link *link) {
         /* All static addresses must be ready. */
         bool has_static_address = false;
         SET_FOREACH(a, link->addresses) {
-                if (a->source != NETWORK_CONFIG_SOURCE_STATIC)
+                if (!link->bearer_configured && a->source != NETWORK_CONFIG_SOURCE_STATIC)
                         continue;
                 if (!address_is_ready(a))
                         return (void) log_link_debug(link, "%s(): static address %s is not ready.", __func__,
@@ -558,6 +558,13 @@ void link_check_ready(Link *link) {
         bool ipv4ll_ready =
                 link_ipv4ll_enabled(link) && link->ipv4ll_address_configured &&
                 link_check_addresses_ready(link, NETWORK_CONFIG_SOURCE_IPV4LL);
+
+        log_error("link_ipv4ll_enabled %d link->ipv4ll_address_configured %d\
+                link_check_addresses_ready %d",
+                link_ipv4ll_enabled(link), link->ipv4ll_address_configured,
+                link_check_addresses_ready(link, NETWORK_CONFIG_SOURCE_IPV4LL));
+
+
         bool dhcp4_ready =
                 link_dhcp4_enabled(link) && link->dhcp4_configured &&
                 link_check_addresses_ready(link, NETWORK_CONFIG_SOURCE_DHCP4);
@@ -594,6 +601,8 @@ void link_check_ready(Link *link) {
         }
 
         /* At least one dynamic addressing protocol is finished. */
+        log_error("ipv4ll_ready %d dhcp4_ready %d dhcp6_ready %d dhcp_pd_ready %d ndisc_ready %d",
+                  ipv4ll_ready, dhcp4_ready, dhcp6_ready, dhcp_pd_ready, ndisc_ready);
         if (!ipv4ll_ready && !dhcp4_ready && !dhcp6_ready && !dhcp_pd_ready && !ndisc_ready)
                 return (void) log_link_debug(link, "%s(): dynamic addressing protocols are enabled but none of them finished yet.", __func__);
 
