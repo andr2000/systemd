@@ -25,6 +25,22 @@ typedef enum {
     MM_BEARER_TYPE_DEDICATED      = 3
 } MMBearerType;
 
+typedef enum {
+    MM_MODEM_STATE_FAILED        = -1,
+    MM_MODEM_STATE_UNKNOWN       = 0,
+    MM_MODEM_STATE_INITIALIZING  = 1,
+    MM_MODEM_STATE_LOCKED        = 2,
+    MM_MODEM_STATE_DISABLED      = 3,
+    MM_MODEM_STATE_DISABLING     = 4,
+    MM_MODEM_STATE_ENABLING      = 5,
+    MM_MODEM_STATE_ENABLED       = 6,
+    MM_MODEM_STATE_SEARCHING     = 7,
+    MM_MODEM_STATE_REGISTERED    = 8,
+    MM_MODEM_STATE_DISCONNECTING = 9,
+    MM_MODEM_STATE_CONNECTING    = 10,
+    MM_MODEM_STATE_CONNECTED     = 11
+} MMModemState;
+
 static int map_name(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
         Bearer *b = ASSERT_PTR(userdata);
         const char *s;
@@ -292,8 +308,10 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
          * aleksander0m: You should ignore those bearers with type
          * default-attach and without any interface reported.
          */
-        if (b->type == MM_BEARER_TYPE_DEFAULT_ATTACH)
-                return log_warning_errno(-EINVAL, "Skip Bearer of type MM_BEARER_TYPE_DEFAULT_ATTACH \"%s\"", b->path);
+        if (b->type == MM_BEARER_TYPE_DEFAULT_ATTACH) {
+                log_debug("Skip Bearer of type MM_BEARER_TYPE_DEFAULT_ATTACH \"%s\"", b->path);
+                return 0;
+        }
 
         log_error("Connected: %d interface %s", b->connected, b->name);
         return bearer_update_link(b);
@@ -474,8 +492,8 @@ static int bearer_signals(Manager *manager) {
         return 0;
 }
 
-static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
-                                        sd_bus_error *error) {
+static int modemmanager_service_changed_signal(sd_bus_message *message, void *userdata,
+                                               sd_bus_error *error) {
         Manager *manager = ASSERT_PTR(userdata);
         const char *name;
         const char *new_owner;
@@ -504,10 +522,39 @@ static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
         return 0;
 }
 
-static int modem_added(sd_bus_message *message, void *userdata,
-                       sd_bus_error *error) {
+static int modem_status_signal(sd_bus_message *message, void *userdata,
+                              sd_bus_error *error) {
+        Manager *manager = ASSERT_PTR(userdata);
+        int r, new_state;
+
+        assert(message);
+
+        r = sd_bus_message_read(message, "iiu", NULL, &new_state);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return r;
+        }
+
+        log_error("------------------------------------------ ModemManager state changed: %d",
+                  new_state);
+
+        if (new_state != MM_MODEM_STATE_CONNECTED)
+                return 0;
+        return enumerate_bearers(manager);
+}
+
+static int modem_added_signal(sd_bus_message *message, void *userdata,
+                              sd_bus_error *error) {
+#define FMT     "type='signal'," \
+                "sender='org.freedesktop.ModemManager1'," \
+                "path_namespace='%s'," \
+                "interface='org.freedesktop.ModemManager1.Modem'," \
+                "member='StateChanged'"
+        Manager *manager = ASSERT_PTR(userdata);
+        _cleanup_free_ char *buf;
         const char *object_path;
         int r;
+        size_t len;
 
         assert(message);
 
@@ -520,10 +567,25 @@ static int modem_added(sd_bus_message *message, void *userdata,
         log_error("------------------------------------------ ModemManager added: %s",
                   object_path);
 
+        /* Subscribe for state changes, so we can enumerate bearers or remove
+         * them.
+         */
+        len = strlen(FMT) + strlen(object_path);
+        buf = malloc(len);
+        if (!buf) {
+                log_oom();
+                return 0;
+        }
+        snprintf(buf, len, FMT, object_path);
+        r = sd_bus_add_match_async(manager->bus, NULL, buf,
+                                   modem_status_signal, NULL, manager);
+        if (r < 0)
+                return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
+
         return 0;
 }
 
-static int modem_removed(sd_bus_message *message, void *userdata,
+static int modem_removed_signal(sd_bus_message *message, void *userdata,
                                 sd_bus_error *error) {
         const char *object_path;
         int r;
@@ -567,17 +629,17 @@ int manager_match_modemmanager_signals(Manager *manager) {
         assert(manager->bus);
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_modemmanager,
-                                   modemmanager_service_changed, NULL, manager);
+                                   modemmanager_service_changed_signal, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_added,
-                                   modem_added, NULL, manager);
+                                   modem_added_signal, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for IntefaceAdded");
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_removed,
-                                   modem_removed, NULL, manager);
+                                   modem_removed_signal, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for IntefaceRemoved");
 
