@@ -476,6 +476,7 @@ static int bearer_signals(Manager *manager) {
 
 static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
                                         sd_bus_error *error) {
+        Manager *manager = ASSERT_PTR(userdata);
         const char *name;
         const char *new_owner;
         int r;
@@ -492,8 +493,9 @@ static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
                 return 0;
 
         if (strlen(new_owner)) {
-                log_error("------------------------------------------ ModemManager alive");
                 /* Enumerate and create all bearers */
+                log_error("------------------------------------------ ModemManager alive");
+                r = enumerate_bearers(manager);
         } else {
                 log_error("------------------------------------------ ModemManager dead");
                 /* Remove all bearers */
@@ -502,36 +504,67 @@ static int modemmanager_service_changed(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static int modem_removed(sd_bus_message *message, void *userdata,
+                                sd_bus_error *error) {
+        const char *object_path;
+        int r;
+
+        assert(message);
+
+        r = sd_bus_message_read(message, "o", &object_path);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return r;
+        }
+
+        log_error("------------------------------------------ ModemManager removed: %s",
+                  object_path);
+
+        return 0;
+}
+
 int manager_match_modemmanager_signals(Manager *manager) {
-        static const char *expression =
+        static const char *expr_modemmanager =
                 "type='signal',"
                 "sender='org.freedesktop.DBus',"
                 "path_namespace='/org/freedesktop/DBus',"
                 "interface='org.freedesktop.DBus',"
                 "member='NameOwnerChanged'";
+        static const char *expr_iface_removed =
+                "type='signal',"
+                "sender='org.freedesktop.ModemManager1',"
+                "path_namespace='/org/freedesktop/ModemManager1',"
+                "interface='org.freedesktop.DBus.ObjectManager',"
+                "member='InterfacesRemoved'";
         int r;
 
         assert(manager);
         assert(manager->bus);
 
-        r = sd_bus_add_match_async(manager->bus, NULL, expression,
+        r = sd_bus_add_match_async(manager->bus, NULL, expr_modemmanager,
                                    modemmanager_service_changed, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
+
+        r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_removed,
+                                   modem_removed, NULL, manager);
+        if (r < 0)
+                return log_error_errno(r, "Failed to request signal for IntefaceAdded");
 
         return 0;
 }
 
 static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_error *ret_error) {
-        Manager *m = ASSERT_PTR(userdata);
+        Manager *manager = ASSERT_PTR(userdata);
         char **names = NULL;
         char **p;
         int r;
         bool found;
 
+        assert(manager);
         assert(message);
 
-        m->slot = sd_bus_slot_unref(m->slot);
+        manager->slot = sd_bus_slot_unref(manager->slot);
 
         r = sd_bus_message_read_strv(message, &names);
         if (r < 0)
@@ -541,15 +574,16 @@ static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_err
         for (p = names; *p != NULL; p++) {
                 if (streq(*p, "org.freedesktop.ModemManager1")) {
                         found = true;
+                        break;
                 }
         }
 
         /* If not found then wait for NameOwnerChanged signal */
         if (!found)
-                return 0;
+                 return 0;
 
         log_info("wwan: ModemManager is available");
-        return 0;
+        return enumerate_bearers(manager);
 }
 
 int manager_notify_mm_bus_connected(Manager *m) {
