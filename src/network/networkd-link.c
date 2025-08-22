@@ -173,26 +173,39 @@ bool link_has_ipv6_connectivity(Link *link) {
 static bool link_is_ready_to_configure_one(Link *link, bool allow_unmanaged) {
         assert(link);
 
-        if (!IN_SET(link->state, LINK_STATE_CONFIGURING, LINK_STATE_CONFIGURED, LINK_STATE_UNMANAGED))
+        if (!IN_SET(link->state, LINK_STATE_CONFIGURING, LINK_STATE_CONFIGURED, LINK_STATE_UNMANAGED)) {
+                log_error("%s:%d false", __func__, __LINE__);
                 return false;
-
-        if (!link->network)
-                return allow_unmanaged;
-
-        if (!link->network->configure_without_carrier) {
-                if (link->set_flags_messages > 0)
-                        return false;
-
-                if (!link_has_carrier(link))
-                        return false;
         }
 
-        if (link->set_link_messages > 0)
-                return false;
+        if (!link->network) {
+                log_error("%s:%d false", __func__, __LINE__);
+                return allow_unmanaged;
+        }
 
-        if (!link->activated)
-                return false;
+        if (!link->network->configure_without_carrier) {
+                if (link->set_flags_messages > 0) {
+                log_error("%s:%d false", __func__, __LINE__);
+                        return false;
+                }
 
+                if (!link_has_carrier(link)) {
+                log_error("%s:%d false", __func__, __LINE__);
+                        return false;
+                }
+        }
+
+        if (link->set_link_messages > 0) {
+                log_error("%s:%d false", __func__, __LINE__);
+                return false;
+        }
+
+        if (!link->activated) {
+                log_error("%s:%d false", __func__, __LINE__);
+                return false;
+        }
+
+        log_error("%s:%d true", __func__, __LINE__);
         return true;
 }
 
