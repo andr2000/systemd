@@ -8,6 +8,7 @@
 #include "networkd-dhcp4.h"
 #include "networkd-dhcp6.h"
 #include "networkd-link.h"
+#include "networkd-setlink.h"
 #include "networkd-manager.h"
 #include "networkd-ndisc.h"
 #include "networkd-route.h"
@@ -425,16 +426,20 @@ int bearer_update_link(Bearer *b) {
         assert(b);
         assert(b->manager);
 
+
         log_error("%s:%d %s b->name \"%s\"\n", __FILE__, __LINE__, __func__, b->name);
         if (!b->name)
                 return 0;
 
         if (link_get_by_name(b->manager, b->name, &link) < 0) {
-                log_error("%s:%d %s link \"%p\"\n", __FILE__, __LINE__, __func__, link);
+                log_error("%s:%d %s link \"%p\"",
+                          __FILE__, __LINE__, __func__, link);
                 return 0;
         }
 
-        log_error("%s:%d link %p\n", __FILE__, __LINE__, link);
+        log_error("%s:%d link %p ifindex %d\n",
+                  __FILE__, __LINE__, link, link->ifindex);
+
         r = link_reconfigure_impl(link, 0);
         log_error("%s:%d link_reconfigure_impl ret %d\n", __FILE__, __LINE__, r);
         if (r < 0)
@@ -444,6 +449,20 @@ int bearer_update_link(Bearer *b) {
 
         r = link_apply_bearer_impl(link, b);
         log_error("%s:%d link_apply_bearer_impl ret %d\n", __FILE__, __LINE__, r);
+        if (r < 0)
+                link_enter_failed(link);
+
+        /*
+         * Need to bring up the interface after the modem has connected.
+         * This is because ModemManger does the following while connecting:
+         * <msg> [1755871777.322239] [modem2] state changed (registered -> connecting)
+         * <dbg> [1755871777.325012] [modem2/bearer5] launching connection with QMI port (cdc-wdm0) and data port (wwan0) (multiplex none)
+         * <dbg> [1755871777.327665] [cdc-wdm0/qmi] bringing down data interface 'wwan0'
+         * <dbg> [1755871777.330108] [modem2/wwan0/net] interface index: 9
+         * <dbg> [1755871777.335265] [cdc-wdm0/qmi] deleting all links in data interface 'wwan0'
+         */
+
+        r = link_request_to_bring_up_or_down(link, true);
         if (r < 0)
                 link_enter_failed(link);
 
