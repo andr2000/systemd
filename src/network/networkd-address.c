@@ -1616,19 +1616,14 @@ static int address_process_request(Request *req, Link *link, Address *address) {
         assert(link);
         assert(address);
 
-        if (!link_is_ready_to_configure(link, false)) {
-                log_error("%s !link_is_ready_to_configure", __func__);
+        if (!link_is_ready_to_configure(link, false))
                 return 0;
-        }
 
         /* Refuse adding more than the limit */
-        if (set_size(link->addresses) >= ADDRESSES_PER_LINK_MAX) {
-                log_error("%s Refuse adding more than the limit", __func__);
+        if (set_size(link->addresses) >= ADDRESSES_PER_LINK_MAX)
                 return 0;
-        }
 
         r = address_requeue_request(req, link, address);
-        log_error("%s address_requeue_request %d", __func__, r);
         if (r == -EBUSY)
                 return 0;
         if (r != 0)
@@ -1637,7 +1632,6 @@ static int address_process_request(Request *req, Link *link, Address *address) {
         address_set_broadcast(address, link);
 
         r = ipv4acd_configure(link, address);
-        log_error("ipv4acd_configure(link, address) %d", r);;
         if (r < 0)
                 return r;
 
@@ -1657,7 +1651,6 @@ static int address_process_request(Request *req, Link *link, Address *address) {
         }
 
         r = address_configure(address, &c, link, req);
-        log_error("address_configure(address, &c, link, req) %d", r);
         if (r < 0)
                 return log_link_warning_errno(link, r, "Failed to configure address: %m");
 
@@ -1665,7 +1658,6 @@ static int address_process_request(Request *req, Link *link, Address *address) {
         if (address_get(link, address, &existing) >= 0)
                 address_enter_configuring(existing);
 
-        log_error("%s return 1", __func__);
         return 1;
 }
 
@@ -1684,16 +1676,12 @@ int link_request_address(
         assert(address);
         assert(address->source != NETWORK_CONFIG_SOURCE_FOREIGN);
 
-        if (address->lifetime_valid_usec == 0) {
-                log_error("%s The requested address is outdated. Let's ignore the request.",
-                          __func__);
+        if (address->lifetime_valid_usec == 0)
+                /* The requested address is outdated. Let's ignore the request. */
                 return 0;
-        }
 
-        if (address_get_request(link, address, NULL) >= 0) {
-                log_error("%s already requested, skipping.", __func__);
+        if (address_get_request(link, address, NULL) >= 0)
                 return 0; /* already requested, skipping. */
-        }
 
         r = address_dup(address, &tmp);
         if (r < 0)
