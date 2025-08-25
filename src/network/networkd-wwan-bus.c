@@ -3,12 +3,15 @@
 #include "bus-error.h"
 #include "bus-map-properties.h"
 #include "bus-match.h"
+#include "bus-message.h"
 #include "bus-parse-xml.h"
 #include "bus-util.h"
 #include "networkd-manager.h"
 #include "networkd-wwan-bus.h"
 #include "networkd-wwan.h"
+#include "strv.h"
 
+#if 0
 /* From ModemManager-enums.h */
 typedef enum {
     MM_BEARER_IP_FAMILY_NONE    = 0,
@@ -492,35 +495,6 @@ static int bearer_signals(Manager *manager) {
         return 0;
 }
 
-static int modemmanager_service_changed_signal(sd_bus_message *message, void *userdata,
-                                               sd_bus_error *error) {
-        Manager *manager = ASSERT_PTR(userdata);
-        const char *name;
-        const char *new_owner;
-        int r;
-
-        assert(message);
-
-        r = sd_bus_message_read(message, "sss", &name, NULL, &new_owner);
-        if (r < 0) {
-                bus_log_parse_error(r);
-                return 0;
-        }
-
-        if (!streq(name, "org.freedesktop.ModemManager1"))
-                return 0;
-
-        if (strlen(new_owner)) {
-                /* Enumerate and create all bearers */
-                log_error("------------------------------------------ ModemManager alive");
-                r = enumerate_bearers(manager);
-        } else {
-                log_error("------------------------------------------ ModemManager dead");
-                /* Remove all bearers */
-        }
-
-        return 0;
-}
 
 static int modem_status_signal(sd_bus_message *message, void *userdata,
                               sd_bus_error *error) {
@@ -604,6 +578,147 @@ static int modem_removed_signal(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+
+#endif
+
+static int modems_save_path(const char *path, void *userdata) {
+        Set **set = ASSERT_PTR(userdata);
+
+        return set_put_strdup(set, path);
+}
+
+static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
+                                    sd_bus_error *ret_error) {
+        static const XMLIntrospectOps ops = {
+                .on_path = modems_save_path,
+        };
+
+        Manager *manager = ASSERT_PTR(userdata);
+        _cleanup_set_free_ Set *paths = NULL;
+        const sd_bus_error *e;
+        const char *xml, *path;
+        int r;
+
+        assert(message);
+
+        e = sd_bus_message_get_error(message);
+        if (e) {
+                int level = LOG_WARNING;
+
+                if (sd_bus_error_has_name(e, SD_BUS_ERROR_SERVICE_UNKNOWN))
+                        /* ModemManager is not started yet. */
+                        level = LOG_DEBUG;
+
+                r = sd_bus_error_get_errno(e);
+                log_full_errno(level, r, "Could not get bearers: %s", bus_error_message(e, r));
+                return 0;
+        }
+
+        r = sd_bus_message_read(message, "s", &xml);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        r = parse_xml_introspect("/org/freedesktop/ModemManager1/Modem", xml, &ops, &paths);
+        if (r < 0) {
+                log_warning_errno(r, "Failed to parse DBus introspect XML, ignoring: %m");
+                return 0;
+        }
+
+        SET_FOREACH(path, paths) {
+                _cleanup_strv_free_ char **bearers = NULL;
+                _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+
+                if (streq(path, "/org/freedesktop/ModemManager1/Modem"))
+                        continue;
+
+                log_info("ModemManager: modem found at %s, get bearers\n", path);
+
+                r = sd_bus_get_property_strv(manager->bus,
+                                             "org.freedesktop.ModemManager1",
+                                             path,
+                                             "org.freedesktop.ModemManager1.Modem",
+                                             "Bearers",
+                                             NULL, &bearers);
+                if (r < 0)
+                        log_warning_errno(r, "Failed to get bearers for modem %s",
+                                          path);
+                STRV_FOREACH(p, bearers) {
+                        log_error("Bearer: %s", *p);
+                }
+        }
+
+        return 0;
+}
+
+static int enumerate_modems(Manager *manager) {
+        int r;
+
+        log_debug("ModemManager: enumerate modems");
+        /* Enumerate all modems and add new and drop removed. */
+
+        assert(manager);
+        assert(sd_bus_is_ready(manager->bus) > 0);
+
+        r = sd_bus_call_method_async(manager->bus,
+                                     NULL,
+                                     "org.freedesktop.ModemManager1",
+                                     "/org/freedesktop/ModemManager1/Modem",
+                                     "org.freedesktop.DBus.Introspectable",
+                                     "Introspect",
+                                     enumerate_modems_handler,
+                                     manager,
+                                     NULL);
+        if (r < 0)
+                return log_error_errno(r, "Could not get modems: %m");
+
+        return 0;
+}
+
+static int interface_add_remove_signal(sd_bus_message *message, void *userdata,
+                                       sd_bus_error *error) {
+        Manager *manager = ASSERT_PTR(userdata);
+
+        assert(manager);
+        assert(message);
+
+        manager->slot = sd_bus_slot_unref(manager->slot);
+
+        if (streq(message->member, "InterfacesAdded")) {
+                log_info("ModemManager: modem added");
+        } else
+                log_info("ModemManager: modem removed");
+
+        return enumerate_modems(manager);
+}
+
+static int name_owner_changed_signal(sd_bus_message *message, void *userdata,
+                                     sd_bus_error *error) {
+        Manager *manager = ASSERT_PTR(userdata);
+        const char *name;
+        const char *new_owner;
+        int r;
+
+        assert(manager);
+        assert(message);
+
+        manager->slot = sd_bus_slot_unref(manager->slot);
+
+        r = sd_bus_message_read(message, "sss", &name, NULL, &new_owner);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return 0;
+        }
+
+        if (!streq(name, "org.freedesktop.ModemManager1"))
+                return 0;
+
+        if (strlen(new_owner))
+                log_info("ModemManager service is now available");
+        else
+                log_info("ModemManager service is not available");
+        return enumerate_modems(manager);
+}
+
 int manager_match_modemmanager_signals(Manager *manager) {
         static const char *expr_modemmanager =
                 "type='signal',"
@@ -629,27 +744,28 @@ int manager_match_modemmanager_signals(Manager *manager) {
         assert(manager->bus);
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_modemmanager,
-                                   modemmanager_service_changed_signal, NULL, manager);
+                                   name_owner_changed_signal,
+                                   NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for NameOwnerChanged");
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_added,
-                                   modem_added_signal, NULL, manager);
+                                   interface_add_remove_signal, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for IntefaceAdded");
 
         r = sd_bus_add_match_async(manager->bus, NULL, expr_iface_removed,
-                                   modem_removed_signal, NULL, manager);
+                                    interface_add_remove_signal, NULL, manager);
         if (r < 0)
                 return log_error_errno(r, "Failed to request signal for IntefaceRemoved");
 
         return 0;
 }
 
-static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_error *ret_error) {
+static int list_names_handler(sd_bus_message *message, void *userdata,
+                              sd_bus_error *ret_error) {
         Manager *manager = ASSERT_PTR(userdata);
-        char **names = NULL;
-        char **p;
+        char **names = NULL, **p;
         int r;
         bool found;
 
@@ -658,6 +774,7 @@ static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_err
 
         manager->slot = sd_bus_slot_unref(manager->slot);
 
+        /* Read the list of available services. */
         r = sd_bus_message_read_strv(message, &names);
         if (r < 0)
                 return bus_log_parse_error(r);
@@ -670,12 +787,12 @@ static int listnames_handler(sd_bus_message *message, void *userdata, sd_bus_err
                 }
         }
 
-        /* If not found then wait for NameOwnerChanged signal */
+        /* If not found yet then wait for NameOwnerChanged signal. */
         if (!found)
                  return 0;
 
-        log_info("wwan: ModemManager is available");
-        return enumerate_bearers(manager);
+        log_info("ModemManager is available");
+        return enumerate_modems(manager);
 }
 
 int manager_notify_mm_bus_connected(Manager *m) {
@@ -690,11 +807,11 @@ int manager_notify_mm_bus_connected(Manager *m) {
         assert(sd_bus_is_ready(m->bus) > 0);
 
         r = sd_bus_call_method_async(m->bus, &m->slot,
-                                 "org.freedesktop.DBus",
-                                 "/org/freedesktop/DBus",
-                                 "org.freedesktop.DBus",
-                                 "ListNames",
-                                 listnames_handler, m, NULL, NULL);
+                                     "org.freedesktop.DBus",
+                                     "/org/freedesktop/DBus",
+                                     "org.freedesktop.DBus",
+                                     "ListNames",
+                                     list_names_handler, m, NULL, NULL);
         if (r < 0)
             return log_warning_errno(r, "Could not LsitNames: %m");
 
