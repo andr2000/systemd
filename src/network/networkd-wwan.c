@@ -482,20 +482,48 @@ void bearer_drop(Bearer *b) {
         bearer_free(b);
 }
 
+void bearers_mark_all_to_drop(Manager *manager) {
+        Bearer *bearer;
+
+        /* Mark all existing bearers to be dropped. */
+        HASHMAP_FOREACH(bearer, manager->bearers_by_path)
+                bearer->to_drop = true;
+}
+
+int bearers_mark_to_keep(Manager *manager, const char *path) {
+        Bearer *bearer;
+        int r;
+
+        r = bearer_get_by_path(manager, path, &bearer);
+        if (r < 0)
+                return r;
+        bearer->to_drop = false;
+        return 0;
+}
+
+void bearers_drop_marked(Manager *manager) {
+        Bearer *bearer;
+
+        /* Mark all existing bearers to be dropped. */
+        HASHMAP_FOREACH(bearer, manager->bearers_by_path)
+                if (bearer->to_drop)
+                        bearer_drop(bearer);
+}
+
+#if 0
 int manager_on_mm_connect(Manager *m) {
         return 0;
 }
 
 int manager_on_mm_disconnect(Manager *m) {
-#if 0
         if (m->bearers_by_name)
                 hashmap_free_with_destructor(m->bearers_by_name, bearer_drop);
         if (m->bearers_by_path)
                 hashmap_free(m->bearers_by_path);
-#endif
         Link *link;
         HASHMAP_FOREACH(link, m->links_by_index)
                 (void) link_stop_engines(link, /* may_keep_dynamic = */ true);
 
         return 0;
 }
+#endif

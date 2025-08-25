@@ -37,7 +37,7 @@ typedef struct Bearer {
         uint32_t ip6_mtu;
 
         bool connected;        /* Connected property */
-        unsigned type;
+        bool to_drop;
 } Bearer;
 
 int bearer_new(Manager *m, const char *path, Bearer **ret);
@@ -55,5 +55,6 @@ int link_apply_bearer(Link *link);
 int bearer_update_link(Bearer *b);
 void bearer_drop(Bearer *b);
 
-int manager_on_mm_connect(Manager *m);
-int manager_on_mm_disconnect(Manager *m);
+void bearers_mark_all_to_drop(Manager *manager);
+int bearers_mark_to_keep(Manager *manager, const char *path);
+void bearers_drop_marked(Manager *manager);
