@@ -43,7 +43,7 @@ typedef struct Bearer {
 typedef struct Modem {
         Manager *manager;
 
-        sd_bus_slot *slot;     /* for GetAll method */
+        sd_bus_slot *slot_propertieschanged;
 
         char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
 
@@ -57,7 +57,8 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(Bearer*, bearer_free);
 
 int bearer_set_name(Bearer *b, const char *name);
 
-int bearer_get_by_path(Modem *modem, const char *path, Bearer **ret);
+int bearer_get_by_path(Manager *manager, const char *path,
+                       Modem **ret_modem, Bearer **ret_bearer);
 int link_get_bearer(Link *link, Bearer **ret);
 
 int link_dhcp_enabled_by_bearer(Link *link, int family);

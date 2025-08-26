@@ -105,20 +105,27 @@ int bearer_set_name(Bearer *b, const char *name) {
                                   b->name, b);
 }
 
-int bearer_get_by_path(Modem *modem, const char *path, Bearer **ret) {
+int bearer_get_by_path(Manager *manager, const char *path,
+                       Modem **ret_modem, Bearer **ret_bearer) {
+        Modem *modem;
         Bearer *b;
 
-        assert(modem);
+        assert(manager);
         assert(path);
 
-        b = hashmap_get(modem->bearers_by_path, path);
-        if (!b)
-                return -ENOENT;
+        HASHMAP_FOREACH(modem, manager->modems_by_path) {
+                b = hashmap_get(modem->bearers_by_path, path);
+                if (!b)
+                        continue;
 
-        if (ret)
-                *ret = b;
+                if (ret_bearer)
+                        *ret_bearer = b;
+                if (ret_modem)
+                        *ret_modem = modem;
+                return 0;
+        }
 
-        return 0;
+        return -ENOENT;
 }
 
 Modem *modem_free(Modem *modem) {
@@ -130,7 +137,7 @@ Modem *modem_free(Modem *modem) {
                         hashmap_remove_value(modem->manager->modems_by_path,
                                              modem->path, modem);
 
-        sd_bus_slot_unref(modem->slot);
+        sd_bus_slot_unref(modem->slot_propertieschanged);
 
         free(modem->path);
 
