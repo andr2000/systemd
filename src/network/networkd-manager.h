@@ -112,8 +112,7 @@ struct Manager {
         Hashmap *wiphy_by_name;
 
         /* ModemManager support */
-        Hashmap *bearers_by_path;
-        Hashmap *bearers_by_name;
+        Hashmap *modems_by_path;
 
         /* For link speed meter */
         bool use_speed_meter;

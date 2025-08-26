@@ -11,16 +11,17 @@
 
 typedef struct Link Link;
 typedef struct Manager Manager;
+typedef struct Modem Modem;
 
 typedef struct Bearer {
-        Manager *manager;
+        Modem *modem;
 
-        sd_bus_slot *slot;     /* for GetAll method */
+        sd_bus_slot *slot_getall;       /* for GetAll method */
 
-        char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Bearer/0 */
-        char *name;            /* Interface property, e.g. wwan0 */
-        char *apn;             /* "apn" field in Properties */
-        AddressFamily ip_type; /* "ip-type" field in Properties */
+        char *path;                     /* DBus path e.g /org/freedesktop/ModemManager/Bearer/0 */
+        char *name;                     /* Interface property, e.g. wwan0 */
+        char *apn;                      /* "apn" field in Properties */
+        AddressFamily ip_type;          /* "ip-type" field in Properties */
 
         /* Ip4Config or IP6Config property */
         unsigned ip4_method;
@@ -36,17 +37,27 @@ typedef struct Bearer {
         uint32_t ip4_mtu;
         uint32_t ip6_mtu;
 
-        bool connected;        /* Connected property */
-        bool to_drop;
+        bool connected;                 /* Connected property */
 } Bearer;
 
-int bearer_new(Manager *m, const char *path, Bearer **ret);
+typedef struct Modem {
+        Manager *manager;
+
+        sd_bus_slot *slot;     /* for GetAll method */
+
+        char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
+
+        Hashmap *bearers_by_path;
+        Hashmap *bearers_by_name;
+} Modem;
+
+int bearer_new(Modem *modem, const char *path, Bearer **ret);
 Bearer *bearer_free(Bearer *b);
 DEFINE_TRIVIAL_CLEANUP_FUNC(Bearer*, bearer_free);
 
 int bearer_set_name(Bearer *b, const char *name);
 
-int bearer_get_by_path(Manager *m, const char *path, Bearer **ret);
+int bearer_get_by_path(Modem *modem, const char *path, Bearer **ret);
 int link_get_bearer(Link *link, Bearer **ret);
 
 int link_dhcp_enabled_by_bearer(Link *link, int family);
@@ -55,6 +66,8 @@ int link_apply_bearer(Link *link);
 int bearer_update_link(Bearer *b);
 void bearer_drop(Bearer *b);
 
-void bearers_mark_all_to_drop(Manager *manager);
-int bearers_mark_to_keep(Manager *manager, const char *path);
-void bearers_drop_marked(Manager *manager);
+int modem_new(Manager *m, const char *path, Modem **ret);
+Modem *modem_free(Modem *modem);
+DEFINE_TRIVIAL_CLEANUP_FUNC(Modem*, modem_free);
+
+int modem_get_by_path(Manager *m, const char *path, Modem **ret);

@@ -266,7 +266,7 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         assert(message);
 
         log_error("%s:%d %s path %s", __FILE__, __LINE__, __func__, b->path);
-        b->slot = sd_bus_slot_unref(b->slot);
+        b->slot_getall = sd_bus_slot_unref(b->slot_getall);
 
         e = sd_bus_message_get_error(message);
         if (e) {
@@ -313,15 +313,16 @@ static int bearer_initialize(Bearer *b) {
         int r;
 
         assert(b);
-        assert(b->manager);
-        assert(sd_bus_is_ready(b->manager->bus) > 0);
+        assert(b->modem);
+        assert(b->modem->manager);
+        assert(sd_bus_is_ready(b->modem->manager->bus) > 0);
         assert(b->path);
 
-        b->slot = sd_bus_slot_unref(b->slot);
+        b->slot_getall = sd_bus_slot_unref(b->slot_getall);
 
         r = sd_bus_call_method_async(
-                        b->manager->bus,
-                        &b->slot,
+                        b->modem->manager->bus,
+                        &b->slot_getall,
                         "org.freedesktop.ModemManager1",
                         b->path,
                         "org.freedesktop.DBus.Properties",
@@ -335,14 +336,15 @@ static int bearer_initialize(Bearer *b) {
         return 0;
 }
 
-static int bearer_new_and_initialize(Manager *manager, const char *path) {
+static int bearer_new_and_initialize(Modem *modem, const char *path) {
         _cleanup_(bearer_freep) Bearer *b = NULL;
         int r;
 
-        assert(manager);
+        assert(modem);
+        assert(modem->manager);
         assert(path);
 
-        r = bearer_new(manager, path, &b);
+        r = bearer_new(modem, path, &b);
         if (r < 0)
                 return log_warning_errno(r, "Failed to allocate new bearer \"%s\": %m", path);
 
@@ -351,6 +353,36 @@ static int bearer_new_and_initialize(Manager *manager, const char *path) {
                 return r;
 
         TAKE_PTR(b);
+        return 0;
+}
+
+static int modem_initialize(Modem *modem) {
+        assert(modem);
+        assert(modem->manager);
+        assert(sd_bus_is_ready(modem->manager->bus) > 0);
+        assert(modem->path);
+
+        return 0;
+}
+
+static int modem_new_and_initialize(Manager *manager, const char *path,
+                                    Modem **ret) {
+        _cleanup_(modem_freep) Modem *modem = NULL;
+        int r;
+
+        assert(manager);
+        assert(path);
+
+        r = modem_new(manager, path, &modem);
+        if (r < 0)
+                return log_warning_errno(r, "Failed to allocate new modem \"%s\": %m", path);
+
+        r = modem_initialize(modem);
+        if (r < 0)
+                return r;
+
+        TAKE_PTR(modem);
+        *ret = modem;
         return 0;
 }
 
@@ -559,16 +591,9 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
 
         e = sd_bus_message_get_error(message);
         if (e) {
-#if 1
-                int level = LOG_WARNING;
-
-                if (sd_bus_error_has_name(e, SD_BUS_ERROR_SERVICE_UNKNOWN))
-                        /* XXXX ModemManager is not started yet. */
-                        level = LOG_DEBUG;
-
                 r = sd_bus_error_get_errno(e);
-                log_full_errno(level, r, "Could not get bearers: %s", bus_error_message(e, r));
-#endif
+                log_warning_errno(r, "Could not get modems: %s",
+                                  bus_error_message(e, r));
                 return 0;
         }
 
@@ -582,16 +607,22 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
                 return 0;
         }
 
-        bearers_mark_all_to_drop(manager);
-
         SET_FOREACH(path, paths) {
                 _cleanup_strv_free_ char **bearers = NULL;
                 _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
+                Modem *modem;
 
                 if (streq(path, "/org/freedesktop/ModemManager1/Modem"))
                         continue;
 
                 log_info("ModemManager: modem found at %s, get bearers\n", path);
+
+                r = modem_new_and_initialize(manager, path, &modem);
+                if (r < 0) {
+                        log_warning_errno(r, "Failed to initialize modem at %s, ignoring",
+                                          path);
+                        continue;
+                }
 
                 r = sd_bus_get_property_strv(manager->bus,
                                              "org.freedesktop.ModemManager1",
@@ -599,18 +630,19 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
                                              "org.freedesktop.ModemManager1.Modem",
                                              "Bearers",
                                              NULL, &bearers);
-                if (r < 0)
+                if (r < 0) {
                         log_warning_errno(r, "Failed to get bearers for modem %s",
                                           path);
+                        continue;
+                }
+
                 STRV_FOREACH(bearer, bearers) {
-                        log_error("Bearer: %s", *bearer);
-                        r = bearers_mark_to_keep(manager, *bearer);
-                        if (r < 0)
-                                (void) bearer_new_and_initialize(manager, *bearer);
+                        log_info("ModemManager: bearer found %s", *bearer);
+                        /* TODO: why void? */
+                        (void) bearer_new_and_initialize(modem, *bearer);
                 }
         }
 
-        bearers_drop_marked(manager);
         return 0;
 }
 
@@ -665,8 +697,6 @@ static int name_owner_changed_signal(sd_bus_message *message, void *userdata,
 
         assert(manager);
         assert(message);
-
-        manager->slot = sd_bus_slot_unref(manager->slot);
 
         r = sd_bus_message_read(message, "sss", &name, NULL, &new_owner);
         if (r < 0) {

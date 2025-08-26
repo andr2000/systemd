@@ -26,14 +26,14 @@ Bearer *bearer_free(Bearer *b) {
         if (!b)
                 return NULL;
 
-        if (b->manager) {
+        if (b->modem) {
                 if (b->path)
-                        hashmap_remove_value(b->manager->bearers_by_path, b->path, b);
+                        hashmap_remove_value(b->modem->bearers_by_path, b->path, b);
                 if (b->name)
-                        hashmap_remove_value(b->manager->bearers_by_name, b->name, b);
+                        hashmap_remove_value(b->modem->bearers_by_name, b->name, b);
         }
 
-        sd_bus_slot_unref(b->slot);
+        sd_bus_slot_unref(b->slot_getall);
 
         free(b->path);
         free(b->name);
@@ -52,12 +52,12 @@ DEFINE_PRIVATE_HASH_OPS_WITH_VALUE_DESTRUCTOR(
         Bearer,
         bearer_free);
 
-int bearer_new(Manager *m, const char *path, Bearer **ret) {
+int bearer_new(Modem *modem, const char *path, Bearer **ret) {
         _cleanup_(bearer_freep) Bearer *b = NULL;
         _cleanup_free_ char *p = NULL;
         int r;
 
-        assert(m);
+        assert(modem);
         assert(path);
 
         p = strdup(path);
@@ -69,11 +69,12 @@ int bearer_new(Manager *m, const char *path, Bearer **ret) {
                 return log_oom();
 
         *b = (Bearer) {
-                .manager = m,
+                .modem = modem,
                 .path = TAKE_PTR(p),
         };
 
-        r = hashmap_ensure_put(&m->bearers_by_path, &bearer_hash_ops, b->path, b);
+        r = hashmap_ensure_put(&modem->bearers_by_path, &bearer_hash_ops,
+                               b->path, b);
         if (r < 0)
                 return r;
 
@@ -87,53 +88,131 @@ int bearer_set_name(Bearer *b, const char *name) {
         int r;
 
         assert(b);
-        assert(b->manager);
+        assert(b->modem);
         assert(name);
 
         if (streq_ptr(b->name, name))
                 return 0;
 
         if (b->name)
-                hashmap_remove_value(b->manager->bearers_by_name, b->name, b);
+                hashmap_remove_value(b->modem->bearers_by_name, b->name, b);
 
         r = free_and_strdup(&b->name, name);
         if (r < 0)
                 return r;
 
-        return hashmap_ensure_put(&b->manager->bearers_by_name, &bearer_hash_ops, b->name, b);
+        return hashmap_ensure_put(&b->modem->bearers_by_name, &bearer_hash_ops,
+                                  b->name, b);
 }
 
-int bearer_get_by_path(Manager *m, const char *path, Bearer **ret) {
+int bearer_get_by_path(Modem *modem, const char *path, Bearer **ret) {
         Bearer *b;
 
-        assert(m);
+        assert(modem);
         assert(path);
 
-        b = hashmap_get(m->bearers_by_path, path);
+        b = hashmap_get(modem->bearers_by_path, path);
         if (!b)
                 return -ENOENT;
 
         if (ret)
                 *ret = b;
+
+        return 0;
+}
+
+Modem *modem_free(Modem *modem) {
+        if (!modem)
+                return NULL;
+
+        if (modem->manager)
+                if (modem->path)
+                        hashmap_remove_value(modem->manager->modems_by_path,
+                                             modem->path, modem);
+
+        sd_bus_slot_unref(modem->slot);
+
+        free(modem->path);
+
+        return mfree(modem);
+}
+
+DEFINE_PRIVATE_HASH_OPS_WITH_VALUE_DESTRUCTOR(
+        modems_hash_ops,
+        char,
+        string_hash_func,
+        string_compare_func,
+        Modem,
+        modem_free);
+
+int modem_new(Manager *m, const char *path, Modem **ret) {
+        _cleanup_(modem_freep) Modem *modem = NULL;
+        _cleanup_free_ char *p = NULL;
+        int r;
+
+        assert(m);
+        assert(path);
+
+        p = strdup(path);
+        if (!p)
+                return log_oom();
+
+        modem = new(Modem, 1);
+        if (!modem)
+                return log_oom();
+
+        *modem = (Modem) {
+                .manager = m,
+                .path = TAKE_PTR(p),
+        };
+
+        r = hashmap_ensure_put(&m->modems_by_path, &modems_hash_ops,
+                               modem->path, modem);
+        if (r < 0)
+                return r;
+
+        if (ret)
+                *ret = modem;
+        TAKE_PTR(modem);
+        return 0;
+}
+
+int modem_get_by_path(Manager *m, const char *path, Modem **ret) {
+        Modem *modem;
+
+        assert(m);
+        assert(path);
+
+        modem = hashmap_get(m->modems_by_path, path);
+        if (!modem)
+                return -ENOENT;
+
+        if (ret)
+                *ret = modem;
 
         return 0;
 }
 
 int link_get_bearer(Link *link, Bearer **ret) {
-        Bearer *b;
+        Modem *modem;
 
         assert(link);
         assert(link->manager);
         assert(link->ifname);
 
-        b = hashmap_get(link->manager->bearers_by_name, link->ifname);
-        if (!b)
-                return -ENOENT;
+        HASHMAP_FOREACH(modem, link->manager->modems_by_path) {
+                Bearer *b;
 
-        if (ret)
-                *ret = b;
+                b = hashmap_get(modem->bearers_by_name, link->ifname);
+                if (!b)
+                        continue;
 
-        return 0;
+                if (ret)
+                        *ret = b;
+                return 0;
+        }
+
+        return -ENOENT;
 }
 
 int link_dhcp_enabled_by_bearer(Link *link, int family) {
@@ -384,7 +463,7 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
                 if (!route_is_marked(route))
                         continue;
 
-                r = route_remove(route, b->manager);
+                r = route_remove(route, b->modem->manager);
                 if (ret)
                         ret = r;
         }
@@ -424,14 +503,15 @@ int bearer_update_link(Bearer *b) {
         int r;
 
         assert(b);
-        assert(b->manager);
+        assert(b->modem);
+        assert(b->modem->manager);
 
 
         log_error("%s:%d %s b->name \"%s\"\n", __FILE__, __LINE__, __func__, b->name);
         if (!b->name)
                 return 0;
 
-        if (link_get_by_name(b->manager, b->name, &link) < 0) {
+        if (link_get_by_name(b->modem->manager, b->name, &link) < 0) {
                 log_error("%s:%d %s link \"%p\"",
                           __FILE__, __LINE__, __func__, link);
                 return 0;
@@ -481,35 +561,6 @@ void bearer_drop(Bearer *b) {
 
         bearer_free(b);
 }
-
-void bearers_mark_all_to_drop(Manager *manager) {
-        Bearer *bearer;
-
-        /* Mark all existing bearers to be dropped. */
-        HASHMAP_FOREACH(bearer, manager->bearers_by_path)
-                bearer->to_drop = true;
-}
-
-int bearers_mark_to_keep(Manager *manager, const char *path) {
-        Bearer *bearer;
-        int r;
-
-        r = bearer_get_by_path(manager, path, &bearer);
-        if (r < 0)
-                return r;
-        bearer->to_drop = false;
-        return 0;
-}
-
-void bearers_drop_marked(Manager *manager) {
-        Bearer *bearer;
-
-        /* Mark all existing bearers to be dropped. */
-        HASHMAP_FOREACH(bearer, manager->bearers_by_path)
-                if (bearer->to_drop)
-                        bearer_drop(bearer);
-}
-
 #if 0
 int manager_on_mm_connect(Manager *m) {
         return 0;

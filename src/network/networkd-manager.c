@@ -708,8 +708,7 @@ Manager* manager_free(Manager *m) {
 
         set_free(m->rules);
 
-        m->bearers_by_path = hashmap_free(m->bearers_by_path);
-        m->bearers_by_name = hashmap_free(m->bearers_by_name);
+        m->modems_by_path = hashmap_free(m->modems_by_path);
 
         sd_netlink_unref(m->rtnl);
         sd_netlink_unref(m->genl);
