@@ -555,7 +555,7 @@ int bearer_update_link(Bearer *b) {
          * <dbg> [1755871777.335265] [cdc-wdm0/qmi] deleting all links in data interface 'wwan0'
          */
 
-        r = link_request_to_bring_up_or_down(link, true);
+        r = link_request_to_bring_up_or_down(link, b->connected);
         if (r < 0)
                 link_enter_failed(link);
 
