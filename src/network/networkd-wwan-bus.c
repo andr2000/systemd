@@ -387,33 +387,6 @@ static int modem_new_and_initialize(Manager *manager, const char *path,
         return 0;
 }
 
-#if 0
-static int match_modem_state_signal(Manager *manager, const char *modem_path) {
-#define FMT "type='signal'," \
-            "sender='org.freedesktop.ModemManager1'," \
-            "path_namespace='%s'," \
-            "interface='org.freedesktop.ModemManager1.Modem'," \
-            "member='StateChanged'"
-        _cleanup_free_ char *buf;
-        int r;
-        size_t len;
-
-        len = strlen(FMT) + strlen(modem_path);
-        buf = malloc(len);
-        if (!buf) {
-                log_oom();
-                return 0;
-        }
-        snprintf(buf, len, FMT, modem_path);
-        r = sd_bus_add_match_async(manager->bus, NULL, buf,
-                                   modem_status_signal, NULL, manager);
-        if (r < 0)
-                return log_error_errno(r, "Failed to request signal for StateChanged");
-
-        return 0;
-}
-#endif
-
 static int bearer_properties_changed_handler(sd_bus_message *message,
                                              void *userdata,
                                              sd_bus_error *error) {
@@ -465,6 +438,30 @@ static int modem_map_bearers(sd_bus *bus, const char *member, sd_bus_message *m,
         return 0;
 }
 
+static int modem_state_changed_signal(sd_bus_message *message, void *userdata,
+                                      sd_bus_error *error) {
+        Modem *modem = ASSERT_PTR(userdata);
+        int r, new_state;
+
+        log_error("%s", __func__);
+
+        assert(message);
+
+        r = sd_bus_message_read(message, "iiu", NULL, &new_state);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return r;
+        }
+
+        log_error("ModemManager: modem %s state changed: %d",
+                  message->path, new_state);
+
+        if (new_state != MM_MODEM_STATE_CONNECTED)
+                return 0;
+
+        return 0;
+}
+
 static int modem_properties_changed_signal(sd_bus_message *message,
                                            void *userdata,
                                            sd_bus_error *ret_error) {
@@ -506,11 +503,16 @@ static int modem_properties_changed_signal(sd_bus_message *message,
 }
 
 static int modem_match_properties_changed(Modem *modem, const char *path) {
-#define FMT "type='signal'," \
-            "sender='org.freedesktop.ModemManager1'," \
-            "path_namespace='%s'," \
-            "interface='org.freedesktop.DBus.Properties'," \
-            "member='PropertiesChanged'"
+#define FMT0 "type='signal'," \
+             "sender='org.freedesktop.ModemManager1'," \
+             "path_namespace='%s'," \
+             "interface='org.freedesktop.DBus.Properties'," \
+             "member='PropertiesChanged'"
+#define FMT1 "type='signal'," \
+             "sender='org.freedesktop.ModemManager1'," \
+             "path_namespace='%s'," \
+             "interface='org.freedesktop.ModemManager1.Modem'," \
+             "member='StateChanged'"
         _cleanup_free_ char *buf;
         size_t len;
         int r;
@@ -519,13 +521,13 @@ static int modem_match_properties_changed(Modem *modem, const char *path) {
         assert(modem->manager);
         assert(modem->manager->bus);
 
-        len = strlen(FMT) + strlen(path);
+        len = strlen(FMT0) + strlen(path);
         buf = malloc(len);
         if (!buf) {
                 log_oom();
                 return 0;
         }
-        snprintf(buf, len, FMT, path);
+        snprintf(buf, len, FMT0, path);
 
         r = sd_bus_add_match_async(modem->manager->bus,
                                    &modem->slot_propertieschanged, buf,
@@ -533,6 +535,23 @@ static int modem_match_properties_changed(Modem *modem, const char *path) {
                                    modem);
         if (r < 0)
                 return log_error_errno(r, "Failed to request match for PropertiesChanged for modem %s",
+                                       path);
+
+        free(buf);
+        len = strlen(FMT1) + strlen(path);
+        buf = malloc(len);
+        if (!buf) {
+                log_oom();
+                return 0;
+        }
+        snprintf(buf, len, FMT1, path);
+
+        r = sd_bus_add_match_async(modem->manager->bus,
+                                   &modem->slot_statechanged, buf,
+                                   modem_state_changed_signal, NULL,
+                                   modem);
+        if (r < 0)
+                return log_error_errno(r, "Failed to request match for StateChanged for modem %s",
                                        path);
 
         return 0;

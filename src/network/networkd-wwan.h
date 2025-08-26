@@ -44,6 +44,7 @@ typedef struct Modem {
         Manager *manager;
 
         sd_bus_slot *slot_propertieschanged;
+        sd_bus_slot *slot_statechanged;
 
         char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
 

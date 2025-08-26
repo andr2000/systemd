@@ -143,6 +143,7 @@ Modem *modem_free(Modem *modem) {
                         hashmap_remove_value(modem->manager->modems_by_path,
                                              modem->path, modem);
         sd_bus_slot_unref(modem->slot_propertieschanged);
+        sd_bus_slot_unref(modem->slot_statechanged);
 
         free(modem->path);
 
