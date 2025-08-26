@@ -54,6 +54,7 @@
 #include "networkd-state-file.h"
 #include "networkd-wifi.h"
 #include "networkd-wiphy.h"
+#include "networkd-wwan.h"
 #include "networkd-wwan-bus.h"
 #include "ordered-set.h"
 #include "path-lookup.h"
@@ -708,7 +709,7 @@ Manager* manager_free(Manager *m) {
 
         set_free(m->rules);
 
-        m->modems_by_path = hashmap_free(m->modems_by_path);
+        m->modems_by_path = hashmap_free_with_destructor(m->modems_by_path, modem_drop);
 
         sd_netlink_unref(m->rtnl);
         sd_netlink_unref(m->genl);

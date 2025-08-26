@@ -132,11 +132,16 @@ Modem *modem_free(Modem *modem) {
         if (!modem)
                 return NULL;
 
+        if (modem->bearers_by_name)
+                hashmap_free_with_destructor(modem->bearers_by_name,
+                                             bearer_drop);
+        if (modem->bearers_by_path)
+                hashmap_free_with_destructor(modem->bearers_by_path,
+                                             bearer_drop);
         if (modem->manager)
                 if (modem->path)
                         hashmap_remove_value(modem->manager->modems_by_path,
                                              modem->path, modem);
-
         sd_bus_slot_unref(modem->slot_propertieschanged);
 
         free(modem->path);
@@ -568,20 +573,11 @@ void bearer_drop(Bearer *b) {
 
         bearer_free(b);
 }
-#if 0
-int manager_on_mm_connect(Manager *m) {
-        return 0;
-}
 
-int manager_on_mm_disconnect(Manager *m) {
-        if (m->bearers_by_name)
-                hashmap_free_with_destructor(m->bearers_by_name, bearer_drop);
-        if (m->bearers_by_path)
-                hashmap_free(m->bearers_by_path);
-        Link *link;
-        HASHMAP_FOREACH(link, m->links_by_index)
-                (void) link_stop_engines(link, /* may_keep_dynamic = */ true);
+void modem_drop(Modem *modem) {
+        assert(modem);
 
-        return 0;
+        log_error("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF %s path: %s", __func__,
+                  modem->path);
+        modem_free(modem);
 }
-#endif

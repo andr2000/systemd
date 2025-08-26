@@ -550,6 +550,11 @@ static int enumerate_modem(Manager *m, const char *path) {
         Modem *modem;
         int r;
 
+        if (streq(path, "/org/freedesktop/ModemManager1"))
+                return 0;
+        if (streq(path, "/org/freedesktop/ModemManager1/Modem"))
+                return 0;
+
         log_info("ModemManager: modem found at %s, get bearers\n", path);
 
         r = modem_new_and_initialize(m, path, &modem);
@@ -574,6 +579,18 @@ static int enumerate_modem(Manager *m, const char *path) {
         }
 
         return modem_match_properties_changed(modem, path);
+}
+
+static int remove_modem(Manager *m, const char *path) {
+        Modem *modem;
+        int r;
+
+        r = modem_get_by_path(m, path, &modem);
+        if (r < 0)
+                return 0;
+
+        modem_drop(modem);
+        return 0;
 }
 
 static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
@@ -609,11 +626,6 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata,
         }
 
         SET_FOREACH(path, paths) {
-                if (streq(path, "/org/freedesktop/ModemManager1"))
-                        continue;
-                if (streq(path, "/org/freedesktop/ModemManager1/Modem"))
-                        continue;
-
                 r = enumerate_modem(manager, path);
                 if (r < 0)
                         continue;
@@ -659,8 +671,14 @@ static int interface_add_remove_signal(sd_bus_message *message, void *userdata,
                 log_info("ModemManager: modem added");
                 enumerate_modem(manager, message->path);
         } else {
+                const char *path;
+                int r;
+
                 log_info("ModemManager: modem removed");
-                /* TODO: XXX */
+                r = sd_bus_message_read_basic(message, 'o', &path);
+                if (r < 0)
+                        return r;
+                return remove_modem(manager, path);
         }
 
         return enumerate_modems(manager);
