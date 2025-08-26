@@ -705,8 +705,11 @@ static int name_owner_changed_signal(sd_bus_message *message, void *userdata,
 
         if (strlen(new_owner))
                 log_info("ModemManager service is now available");
-        else
+        else {
                 log_info("ModemManager service is not available");
+                modem_drop_all(manager);
+                return 0;
+        }
         return enumerate_modems(manager);
 }
 

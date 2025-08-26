@@ -709,7 +709,7 @@ Manager* manager_free(Manager *m) {
 
         set_free(m->rules);
 
-        m->modems_by_path = hashmap_free_with_destructor(m->modems_by_path, modem_drop);
+        modem_drop_all(m);
 
         sd_netlink_unref(m->rtnl);
         sd_netlink_unref(m->genl);

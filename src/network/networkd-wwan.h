@@ -73,3 +73,4 @@ DEFINE_TRIVIAL_CLEANUP_FUNC(Modem*, modem_free);
 
 int modem_get_by_path(Manager *m, const char *path, Modem **ret);
 void modem_drop(Modem *modem);
+void modem_drop_all(Manager *m);

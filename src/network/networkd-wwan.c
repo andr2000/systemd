@@ -581,3 +581,8 @@ void modem_drop(Modem *modem) {
                   modem->path);
         modem_free(modem);
 }
+
+void modem_drop_all(Manager *m) {
+        m->modems_by_path = hashmap_free_with_destructor(m->modems_by_path,
+                                                         modem_drop);
+}
