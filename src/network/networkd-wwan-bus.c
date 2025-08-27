@@ -405,8 +405,12 @@ static int bearer_properties_changed_handler(sd_bus_message *message,
                 return 0;
 
         if (bearer_get_by_path(manager, path, &modem, &b) < 0) {
-                /* New bearer. */
-                (void) bearer_new_and_initialize(modem, path);
+                /*
+                 * Have new bearer: check if we have the corresponding modem
+                 * for it which we might not during initialization.
+                 */
+                if (modem)
+                        (void) bearer_new_and_initialize(modem, path);
                 return 0;
         }
 
