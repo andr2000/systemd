@@ -351,6 +351,13 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
         route->family = family;
         route->nexthop.family = family;
         route->nexthop.gw = *gw;
+        if (link->network->priority != LINK_BRIDGE_PORT_PRIORITY_INVALID) {
+                route->priority = link->network->priority;
+                route->priority_set = true;
+        } else if (link->network->dhcp_route_metric != DHCP_ROUTE_METRIC) {
+                route->priority = link->network->dhcp_route_metric;
+                route->priority_set = true;
+        }
 
         if (prefsrc)
                 route->prefsrc = *prefsrc;
