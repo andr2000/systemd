@@ -343,6 +343,13 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
         if (!in_addr_is_set(family, gw))
                 return 0;
 
+        /*
+         * HACK: Allow not setting the default route via
+         * DHCPv4.UseGateway option
+         */
+        if (link->network->dhcp_use_gateway == 0)
+                return 0;
+
         r = route_new(&route);
         if (r < 0)
                 return log_oom();
