@@ -356,11 +356,68 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         return 0;
 }
 
+static int modem_get_all_handler(sd_bus_message *message, void *userdata,
+                                 sd_bus_error *ret_error) {
+        static const struct bus_properties_map map[] = {
+                { "State",             "i", NULL, offsetof(Modem, state) },
+                { "StateFailedReason", "u", NULL, offsetof(Modem, state_fail_reason) },
+                {}
+        };
+
+        Modem *modem = ASSERT_PTR(userdata);
+        const sd_bus_error *e;
+        int r;
+
+        assert(message);
+
+        log_error("%s:%d %s path %s", __FILE__, __LINE__, __func__, modem->path);
+        modem->slot_getall = sd_bus_slot_unref(modem->slot_getall);
+
+        e = sd_bus_message_get_error(message);
+        if (e) {
+                r = sd_bus_error_get_errno(e);
+                log_full_errno(LOG_ERR, r,
+                               "Could not get properties of modem \"%s\": %s",
+                               modem->path, bus_error_message(e, r));
+
+                modem_drop(modem);
+                return 0;
+        }
+
+        /* skip name: string "org.freedesktop.ModemManager1.Modem" */
+        sd_bus_message_skip(message, "s");
+
+        r = bus_message_map_all_properties(message, map, BUS_MAP_BOOLEAN_AS_BOOL,
+                                           ret_error, modem);
+        if (r < 0)
+                return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
+                                         modem->path, bus_error_message(ret_error, r));
+
+        return 0;
+}
+
 static int modem_initialize(Modem *modem) {
         assert(modem);
         assert(modem->manager);
         assert(sd_bus_is_ready(modem->manager->bus) > 0);
         assert(modem->path);
+        int r;
+
+        modem->slot_getall = sd_bus_slot_unref(modem->slot_getall);
+
+        r = sd_bus_call_method_async(
+                        modem->manager->bus,
+                        &modem->slot_getall,
+                        "org.freedesktop.ModemManager1",
+                        modem->path,
+                        "org.freedesktop.DBus.Properties",
+                        "GetAll",
+                        modem_get_all_handler,
+                        modem,
+                        "s", "org.freedesktop.ModemManager1.Modem");
+        if (r < 0)
+                return log_warning_errno(r, "Could not get properties of modem \"%s\": %m",
+                                         modem->path);
 
         return 0;
 }
@@ -384,6 +441,11 @@ static int modem_new_and_initialize(Manager *manager, const char *path,
         if (ret)
                 *ret = modem;
 
+        return 0;
+}
+
+static int modem_on_disconnected(Modem *modem) {
+        log_error("ModemManager: modem %s has disconnected", modem->path);
         return 0;
 }
 
@@ -442,26 +504,56 @@ static int modem_map_bearers(sd_bus *bus, const char *member, sd_bus_message *m,
         return 0;
 }
 
-static int modem_state_changed_signal(sd_bus_message *message, void *userdata,
-                                      sd_bus_error *error) {
+static int modem_state_changed(sd_bus *bus, const char *member,
+                               sd_bus_message *message, sd_bus_error *error,
+                               void *userdata) {
         Modem *modem = ASSERT_PTR(userdata);
-        int r, new_state;
+        int r, old_state, new_state;
 
         log_error("%s", __func__);
 
-        assert(message);
+        assert(modem);
 
-        r = sd_bus_message_read(message, "iiu", NULL, &new_state);
+        r = sd_bus_message_read(message, "i", &new_state);
         if (r < 0) {
                 bus_log_parse_error(r);
                 return r;
         }
 
-        log_error("ModemManager: modem %s state changed: %d",
-                  message->path, new_state);
+        old_state = modem->state;
+        modem->state = new_state;
 
-        if (new_state != MM_MODEM_STATE_CONNECTED)
-                return 0;
+        log_error("ModemManager: modem %s state changed: %d -> %d",
+                  message->path, old_state, new_state);
+
+        if ((old_state == MM_MODEM_STATE_REGISTERED) &&
+            (new_state == MM_MODEM_STATE_SEARCHING))
+                return modem_on_disconnected(modem);
+
+        return 0;
+}
+
+static int modem_state_failed(sd_bus *bus, const char *member,
+                              sd_bus_message *message, sd_bus_error *error,
+                              void *userdata) {
+        Modem *modem = ASSERT_PTR(userdata);
+        int r, old_state, new_state;
+
+        log_error("%s", __func__);
+
+        assert(modem);
+
+        r = sd_bus_message_read(message, "i", &new_state);
+        if (r < 0) {
+                bus_log_parse_error(r);
+                return r;
+        }
+
+        old_state = modem->state_fail_reason;
+        modem->state_fail_reason = new_state;
+
+        log_error("ModemManager: modem %s state failed reason: %d -> %d",
+                  message->path, old_state, new_state);
 
         return 0;
 }
@@ -470,7 +562,9 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                                            void *userdata,
                                            sd_bus_error *ret_error) {
         static const struct bus_properties_map map[] = {
-                { "Bearers", "a{sv}", modem_map_bearers, 0, },
+                { "Bearers",       "a{sv}", modem_map_bearers,   0, },
+                { "State",             "i", modem_state_changed, 0, },
+                { "StateFailedReason", "u", modem_state_failed,  0, },
                 {}
         };
         Modem *modem = ASSERT_PTR(userdata);
@@ -507,16 +601,11 @@ static int modem_properties_changed_signal(sd_bus_message *message,
 }
 
 static int modem_match_properties_changed(Modem *modem, const char *path) {
-#define FMT0 "type='signal'," \
+#define FMT  "type='signal'," \
              "sender='org.freedesktop.ModemManager1'," \
              "path_namespace='%s'," \
              "interface='org.freedesktop.DBus.Properties'," \
              "member='PropertiesChanged'"
-#define FMT1 "type='signal'," \
-             "sender='org.freedesktop.ModemManager1'," \
-             "path_namespace='%s'," \
-             "interface='org.freedesktop.ModemManager1.Modem'," \
-             "member='StateChanged'"
         _cleanup_free_ char *buf;
         size_t len;
         int r;
@@ -525,13 +614,13 @@ static int modem_match_properties_changed(Modem *modem, const char *path) {
         assert(modem->manager);
         assert(modem->manager->bus);
 
-        len = strlen(FMT0) + strlen(path);
+        len = strlen(FMT) + strlen(path);
         buf = malloc(len);
         if (!buf) {
                 log_oom();
                 return 0;
         }
-        snprintf(buf, len, FMT0, path);
+        snprintf(buf, len, FMT, path);
 
         r = sd_bus_add_match_async(modem->manager->bus,
                                    &modem->slot_propertieschanged, buf,
@@ -539,23 +628,6 @@ static int modem_match_properties_changed(Modem *modem, const char *path) {
                                    modem);
         if (r < 0)
                 return log_error_errno(r, "Failed to request match for PropertiesChanged for modem %s",
-                                       path);
-
-        free(buf);
-        len = strlen(FMT1) + strlen(path);
-        buf = malloc(len);
-        if (!buf) {
-                log_oom();
-                return 0;
-        }
-        snprintf(buf, len, FMT1, path);
-
-        r = sd_bus_add_match_async(modem->manager->bus,
-                                   &modem->slot_statechanged, buf,
-                                   modem_state_changed_signal, NULL,
-                                   modem);
-        if (r < 0)
-                return log_error_errno(r, "Failed to request match for StateChanged for modem %s",
                                        path);
 
         return 0;

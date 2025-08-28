@@ -43,6 +43,7 @@ typedef struct Bearer {
 typedef struct Modem {
         Manager *manager;
 
+        sd_bus_slot *slot_getall;
         sd_bus_slot *slot_propertieschanged;
         sd_bus_slot *slot_statechanged;
 
@@ -50,6 +51,9 @@ typedef struct Modem {
 
         Hashmap *bearers_by_path;
         Hashmap *bearers_by_name;
+
+        int state;
+        unsigned int state_fail_reason;
 } Modem;
 
 int bearer_new(Modem *modem, const char *path, Bearer **ret);
