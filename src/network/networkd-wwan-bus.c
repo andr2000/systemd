@@ -578,6 +578,10 @@ static int enumerate_modem(Manager *m, const char *path) {
         if (streq(path, "/org/freedesktop/ModemManager1/Modem"))
                 return 0;
 
+        r = modem_get_by_path(m, path, &modem);
+        if (r != -ENOENT)
+                return 0;
+
         log_info("ModemManager: modem found at %s, get bearers\n", path);
 
         r = modem_new_and_initialize(m, path, &modem);
