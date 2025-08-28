@@ -375,7 +375,39 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         return 0;
 }
 
+static int modem_connect_handler(sd_bus_message *message, void *userdata,
+                                 sd_bus_error *ret_error) {
+        Modem *modem = ASSERT_PTR(userdata);
+        const sd_bus_error *e;
+        int r;
+
+        assert(message);
+
+        log_error("\n\n\nJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ %s:%d %s path %s", __FILE__, __LINE__, __func__, modem->path);
+        modem->slot_connect = sd_bus_slot_unref(modem->slot_connect);
+
+        e = sd_bus_message_get_error(message);
+        if (e) {
+                r = sd_bus_error_get_errno(e);
+                log_full_errno(LOG_ERR, r,
+                               "Could not connect modem \"%s\": %s",
+                               modem->path, bus_error_message(e, r));
+
+                return 0;
+        }
+
+        {
+                const char *o;
+                sd_bus_message_read(message, "o", &o);
+                log_error("JJJJJJJJJJJJJJJJJJJ %s", o);
+        }
+
+        return 0;
+}
+
 static int modem_on_disconnected(Modem *modem) {
+        int r;
+
         if (modem->state_fail_reason != MM_MODEM_STATE_FAILED_REASON_NONE) {
                 log_error("ModemManager: cannot reconnect, modem is in failed state: %s",
                           modem->state_fail_reason < __MM_MODEM_STATE_FAILED_REASON_MAX ?
@@ -384,7 +416,28 @@ static int modem_on_disconnected(Modem *modem) {
                 return 0;
         }
 
-        log_error("ModemManager: starting reconnect on %s", modem->path);
+        if (modem->reconnecting) {
+                log_debug("ModemManager: %s is already reconnecting",
+                          modem->path);
+                return 0;
+        }
+
+        log_error("ModemManager: starting simple connect on %s", modem->path);
+        r = sd_bus_call_method_async(
+                        modem->manager->bus,
+                        &modem->slot_getall,
+                        "org.freedesktop.ModemManager1",
+                        modem->path,
+                        "org.freedesktop.ModemManager1.Modem.Simple",
+                        "Connect",
+                        modem_connect_handler,
+                        modem,
+                        "a{sv}", 1, "apn", "s", "internet", NULL);
+        if (r < 0)
+                return log_warning_errno(r, "Could not start modem connection %s: %m",
+                                         modem->path);
+
+        modem->reconnecting = true;
         return 0;
 }
 

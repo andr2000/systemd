@@ -46,6 +46,7 @@ typedef struct Modem {
         sd_bus_slot *slot_getall;
         sd_bus_slot *slot_propertieschanged;
         sd_bus_slot *slot_statechanged;
+        sd_bus_slot *slot_connect;
 
         char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
 
@@ -54,6 +55,7 @@ typedef struct Modem {
 
         int state;
         unsigned int state_fail_reason;
+        bool reconnecting;
 } Modem;
 
 int bearer_new(Modem *modem, const char *path, Bearer **ret);

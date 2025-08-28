@@ -145,6 +145,7 @@ Modem *modem_free(Modem *modem) {
         sd_bus_slot_unref(modem->slot_getall);
         sd_bus_slot_unref(modem->slot_propertieschanged);
         sd_bus_slot_unref(modem->slot_statechanged);
+        sd_bus_slot_unref(modem->slot_connect);
 
         free(modem->path);
 
