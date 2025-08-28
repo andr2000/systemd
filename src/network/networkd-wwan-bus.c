@@ -13,34 +13,34 @@
 
 /* From ModemManager-enums.h */
 typedef enum {
-    MM_BEARER_IP_FAMILY_NONE    = 0,
-    MM_BEARER_IP_FAMILY_IPV4    = 1 << 0,
-    MM_BEARER_IP_FAMILY_IPV6    = 1 << 1,
-    MM_BEARER_IP_FAMILY_IPV4V6  = 1 << 2,
-    MM_BEARER_IP_FAMILY_ANY     = 0xFFFFFFFF
+        MM_BEARER_IP_FAMILY_NONE    = 0,
+        MM_BEARER_IP_FAMILY_IPV4    = 1 << 0,
+        MM_BEARER_IP_FAMILY_IPV6    = 1 << 1,
+        MM_BEARER_IP_FAMILY_IPV4V6  = 1 << 2,
+        MM_BEARER_IP_FAMILY_ANY     = 0xFFFFFFFF
 } MMBearerIpFamily;
 
 typedef enum {
-    MM_BEARER_TYPE_UNKNOWN        = 0,
-    MM_BEARER_TYPE_DEFAULT        = 1,
-    MM_BEARER_TYPE_DEFAULT_ATTACH = 2,
-    MM_BEARER_TYPE_DEDICATED      = 3
+        MM_BEARER_TYPE_UNKNOWN        = 0,
+        MM_BEARER_TYPE_DEFAULT        = 1,
+        MM_BEARER_TYPE_DEFAULT_ATTACH = 2,
+        MM_BEARER_TYPE_DEDICATED      = 3
 } MMBearerType;
 
 typedef enum {
-    MM_MODEM_STATE_FAILED        = -1,
-    MM_MODEM_STATE_UNKNOWN       = 0,
-    MM_MODEM_STATE_INITIALIZING  = 1,
-    MM_MODEM_STATE_LOCKED        = 2,
-    MM_MODEM_STATE_DISABLED      = 3,
-    MM_MODEM_STATE_DISABLING     = 4,
-    MM_MODEM_STATE_ENABLING      = 5,
-    MM_MODEM_STATE_ENABLED       = 6,
-    MM_MODEM_STATE_SEARCHING     = 7,
-    MM_MODEM_STATE_REGISTERED    = 8,
-    MM_MODEM_STATE_DISCONNECTING = 9,
-    MM_MODEM_STATE_CONNECTING    = 10,
-    MM_MODEM_STATE_CONNECTED     = 11
+        MM_MODEM_STATE_FAILED        = -1,
+        MM_MODEM_STATE_UNKNOWN       = 0,
+        MM_MODEM_STATE_INITIALIZING  = 1,
+        MM_MODEM_STATE_LOCKED        = 2,
+        MM_MODEM_STATE_DISABLED      = 3,
+        MM_MODEM_STATE_DISABLING     = 4,
+        MM_MODEM_STATE_ENABLING      = 5,
+        MM_MODEM_STATE_ENABLED       = 6,
+        MM_MODEM_STATE_SEARCHING     = 7,
+        MM_MODEM_STATE_REGISTERED    = 8,
+        MM_MODEM_STATE_DISCONNECTING = 9,
+        MM_MODEM_STATE_CONNECTING    = 10,
+        MM_MODEM_STATE_CONNECTED     = 11
 } MMModemState;
 
 static int map_name(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
