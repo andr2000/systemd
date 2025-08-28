@@ -43,6 +43,25 @@ typedef enum {
         MM_MODEM_STATE_CONNECTED     = 11
 } MMModemState;
 
+typedef enum { /*< underscore_name=mm_modem_state_failed_reason >*/
+        MM_MODEM_STATE_FAILED_REASON_NONE                  = 0,
+        MM_MODEM_STATE_FAILED_REASON_UNKNOWN               = 1,
+        MM_MODEM_STATE_FAILED_REASON_SIM_MISSING           = 2,
+        MM_MODEM_STATE_FAILED_REASON_SIM_ERROR             = 3,
+        MM_MODEM_STATE_FAILED_REASON_UNKNOWN_CAPABILITIES  = 4,
+        MM_MODEM_STATE_FAILED_REASON_ESIM_WITHOUT_PROFILES = 5,
+        __MM_MODEM_STATE_FAILED_REASON_MAX                 = 6,
+} MMModemStateFailedReason;
+
+static const char * const MODEM_STATE_FAILED_STR[__MM_MODEM_STATE_FAILED_REASON_MAX] = {
+        [MM_MODEM_STATE_FAILED_REASON_NONE]                  = "No error",
+        [MM_MODEM_STATE_FAILED_REASON_UNKNOWN]               = "Unknown error",
+        [MM_MODEM_STATE_FAILED_REASON_SIM_MISSING]           = "SIM is required, but missing",
+        [MM_MODEM_STATE_FAILED_REASON_SIM_ERROR]             = "SIM is available,, but unusable",
+        [MM_MODEM_STATE_FAILED_REASON_UNKNOWN_CAPABILITIES]  = "Unknown modem capabilities",
+        [MM_MODEM_STATE_FAILED_REASON_ESIM_WITHOUT_PROFILES] = "eSIM is not initialized",
+};
+
 static int map_name(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
         Bearer *b = ASSERT_PTR(userdata);
         const char *s;
@@ -356,6 +375,19 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         return 0;
 }
 
+static int modem_on_disconnected(Modem *modem) {
+        if (modem->state_fail_reason != MM_MODEM_STATE_FAILED_REASON_NONE) {
+                log_error("ModemManager: cannot reconnect, modem is in failed state: %s",
+                          modem->state_fail_reason < __MM_MODEM_STATE_FAILED_REASON_MAX ?
+                          MODEM_STATE_FAILED_STR[modem->state_fail_reason] :
+                          "unknown reason");
+                return 0;
+        }
+
+        log_error("ModemManager: starting reconnect on %s", modem->path);
+        return 0;
+}
+
 static int modem_get_all_handler(sd_bus_message *message, void *userdata,
                                  sd_bus_error *ret_error) {
         static const struct bus_properties_map map[] = {
@@ -392,6 +424,9 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
                                          modem->path, bus_error_message(ret_error, r));
+
+        if (modem->state != MM_MODEM_STATE_CONNECTED)
+                modem_on_disconnected(modem);
 
         return 0;
 }
@@ -441,11 +476,6 @@ static int modem_new_and_initialize(Manager *manager, const char *path,
         if (ret)
                 *ret = modem;
 
-        return 0;
-}
-
-static int modem_on_disconnected(Modem *modem) {
-        log_error("ModemManager: modem %s has disconnected", modem->path);
         return 0;
 }
 
@@ -504,67 +534,13 @@ static int modem_map_bearers(sd_bus *bus, const char *member, sd_bus_message *m,
         return 0;
 }
 
-static int modem_state_changed(sd_bus *bus, const char *member,
-                               sd_bus_message *message, sd_bus_error *error,
-                               void *userdata) {
-        Modem *modem = ASSERT_PTR(userdata);
-        int r, old_state, new_state;
-
-        log_error("%s", __func__);
-
-        assert(modem);
-
-        r = sd_bus_message_read(message, "i", &new_state);
-        if (r < 0) {
-                bus_log_parse_error(r);
-                return r;
-        }
-
-        old_state = modem->state;
-        modem->state = new_state;
-
-        log_error("ModemManager: modem %s state changed: %d -> %d",
-                  message->path, old_state, new_state);
-
-        if ((old_state == MM_MODEM_STATE_REGISTERED) &&
-            (new_state == MM_MODEM_STATE_SEARCHING))
-                return modem_on_disconnected(modem);
-
-        return 0;
-}
-
-static int modem_state_failed(sd_bus *bus, const char *member,
-                              sd_bus_message *message, sd_bus_error *error,
-                              void *userdata) {
-        Modem *modem = ASSERT_PTR(userdata);
-        int r, old_state, new_state;
-
-        log_error("%s", __func__);
-
-        assert(modem);
-
-        r = sd_bus_message_read(message, "i", &new_state);
-        if (r < 0) {
-                bus_log_parse_error(r);
-                return r;
-        }
-
-        old_state = modem->state_fail_reason;
-        modem->state_fail_reason = new_state;
-
-        log_error("ModemManager: modem %s state failed reason: %d -> %d",
-                  message->path, old_state, new_state);
-
-        return 0;
-}
-
 static int modem_properties_changed_signal(sd_bus_message *message,
                                            void *userdata,
                                            sd_bus_error *ret_error) {
         static const struct bus_properties_map map[] = {
-                { "Bearers",       "a{sv}", modem_map_bearers,   0, },
-                { "State",             "i", modem_state_changed, 0, },
-                { "StateFailedReason", "u", modem_state_failed,  0, },
+                { "Bearers",       "a{sv}", modem_map_bearers, 0, },
+                { "State",             "i", NULL,              offsetof(Modem, state) },
+                { "StateFailedReason", "u", NULL,              offsetof(Modem, state_fail_reason) },
                 {}
         };
         Modem *modem = ASSERT_PTR(userdata);
@@ -596,6 +572,9 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                 return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
                                          modem->path,
                                          bus_error_message(ret_error, r));
+
+        if (modem->state != MM_MODEM_STATE_CONNECTED)
+                modem_on_disconnected(modem);
 
         return 0;
 }
