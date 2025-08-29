@@ -6,12 +6,13 @@
 #include "bus-message.h"
 #include "bus-parse-xml.h"
 #include "bus-util.h"
+#include "event-util.h"
 #include "networkd-manager.h"
 #include "networkd-wwan-bus.h"
 #include "networkd-wwan.h"
 #include "strv.h"
 
-#define RECONNECT_TIMEOUT_SEC   5
+#define RECONNECT_TIMEOUT_SEC   30
 
 static const char * const MODEM_STATE_FAILED_STR[__MM_MODEM_STATE_FAILED_REASON_MAX] = {
         [MM_MODEM_STATE_FAILED_REASON_NONE]                  = "No error",
@@ -335,43 +336,6 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         return 0;
 }
 
-#if 0
-static int reconnect_timer_hanlder(sd_event_source *s, uint64_t usec,
-                                   void *userdata) {
-        Modem *modem = ASSERT_PTR(userdata);
-
-        if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
-                return 0;
-
-        (void) modem_connect(modem);
-        return 0;
-}
-
-static int modem_schedule_reconnect(Modem *modem) {
-        _cleanup_(sd_event_unrefp) sd_event *event = NULL;
-        int r;
-
-        if (modem->reconnect_state == MODEM_RECONNECT_DISABLED)
-                return 0;
-
-        r = sd_event_default(&event);
-        if (r < 0)
-                return log_error_errno(r, "Failed to allocate event loop for modem reconnect: %m");
-
-        r = sd_event_add_time_relative(event, NULL, CLOCK_MONOTONIC,
-                                       RECONNECT_TIMEOUT_SEC * USEC_PER_SEC, 0,
-                                       reconnect_timer_hanlder, modem);
-        if (r < 0)
-                return log_error_errno(r, "Failed to schedule modem reconnect timeout: %m\n");
-
-        log_error("ModemManager: scheduling reconnect in %d seconds for %s",
-                  RECONNECT_TIMEOUT_SEC, modem->path);
-
-        modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
-        return 0;
-}
-#endif
-
 static int modem_connect_handler(sd_bus_message *message, void *userdata,
                                  sd_bus_error *ret_error) {
         Modem *modem = ASSERT_PTR(userdata);
@@ -389,9 +353,6 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
                 log_full_errno(LOG_ERR, r,
                                "Could not connect modem \"%s\": %s",
                                modem->path, bus_error_message(e, r));
-
-                //if (IN_SET(r, -EINVAL))
-                //        modem->reconnect_state = MODEM_RECONNECT_DISABLED;
                 return 0;
         }
 
@@ -401,11 +362,82 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static void modem_simple_connect(Modem *modem) {
+        int r;
+
+        if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
+                return;
+
+        log_error("ModemManager: starting simple connect on %s", modem->path);
+        r = sd_bus_call_method_async(modem->manager->bus,
+                                     &modem->slot_getall,
+                                     "org.freedesktop.ModemManager1",
+                                     modem->path,
+                                     "org.freedesktop.ModemManager1.Modem.Simple",
+                                     "Connect",
+                                     modem_connect_handler,
+                                     modem,
+                                     "a{sv}", 1,
+                                     "apn", "s", "internet",
+                                     NULL);
+        /*
+         * If we failed to (re)start the connection now then rely on the priodic
+         * timer and wait when it retries the connection attempt.
+         */
+        if (r < 0) {
+                log_warning_errno(r, "Could not start modem connection %s, will retry: %m",
+                                  modem->path);
+        }
+}
+
+static int reset_timer(Manager *m, sd_event *e, sd_event_source **s);
+
+static int on_periodic_timer(sd_event_source *s, uint64_t usec, void *userdata) {
+        Manager *manager = ASSERT_PTR(userdata);
+        Modem *modem;
+        sd_event *e;
+        int r;
+
+        assert(s);
+        assert(manager);
+
+        e = sd_event_source_get_event(s);
+
+        HASHMAP_FOREACH(modem, manager->modems_by_path) {
+                log_error("start simple connect from %s", __func__);
+                modem_simple_connect(modem);
+        }
+
+        r = reset_timer(manager, e, &s);
+        if (r < 0)
+                log_warning_errno(r, "ModemManager: Failed to reset periodic timer event source, ignoring: %m");
+
+        return 0;
+}
+
+static int reset_timer(Manager *m, sd_event *e, sd_event_source **s) {
+        return event_reset_time_relative(e, s, CLOCK_MONOTONIC,
+                                         RECONNECT_TIMEOUT_SEC * USEC_PER_SEC, 0,
+                                         on_periodic_timer, m, 0,
+                                         "modem-periodic-timer-event-source",
+                                         false);
+}
+
+static int setup_periodic_timer(Manager *m, sd_event *event) {
+        _cleanup_(sd_event_source_unrefp) sd_event_source *s = NULL;
+        int r;
+
+        assert(event);
+
+        r = reset_timer(m, event, &s);
+        if (r < 0)
+                return r;
+
+        return sd_event_source_set_floating(s, true);
+}
 
 static int modem_on_state_change(Modem *modem, MMModemState old_state,
                                  MMModemStateFailedReason old_fail_reason) {
-        int r;
-
         if (IN_SET(modem->state, MM_MODEM_STATE_CONNECTING,
                    MM_MODEM_STATE_CONNECTED)) {
                 /*
@@ -417,14 +449,6 @@ static int modem_on_state_change(Modem *modem, MMModemState old_state,
                  * states if failed reason is not NONE, e.g. modem is all good.
                  */
                 modem->reconnect_state = MODEM_RECONNECT_DONE;
-                return 0;
-        }
-
-        if (modem->reconnect_state == MODEM_RECONNECT_DISABLED) {
-                /*
-                 * This means we tried to simple connect before and faced
-                 * unrecoverable issues. Do not try further.
-                 */
                 return 0;
         }
 
@@ -447,25 +471,14 @@ static int modem_on_state_change(Modem *modem, MMModemState old_state,
                 return 0;
         }
 
-        /* Modem is not in failed state and is not connected. */
+        /*
+         * Modem is not in failed state and is not connected: try now.
+         * It is ok to fail and re-try to connect with periodic timer
+         * later on.
+         */
         modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
-
-        log_error("ModemManager: starting simple connect on %s", modem->path);
-        r = sd_bus_call_method_async(modem->manager->bus,
-                                     &modem->slot_getall,
-                                     "org.freedesktop.ModemManager1",
-                                     modem->path,
-                                     "org.freedesktop.ModemManager1.Modem.Simple",
-                                     "Connect",
-                                     modem_connect_handler,
-                                     modem,
-                                     "a{sv}", 1,
-                                     "apn1", "s", "internet",
-                                     NULL);
-        if (r < 0) {
-                return log_warning_errno(r, "Could not start modem connection %s: %m",
-                                         modem->path);
-        }
+        log_error("start simple connect from %s", __func__);
+        modem_simple_connect(modem);
 
         return 0;
 }
@@ -966,6 +979,7 @@ static int list_names_handler(sd_bus_message *message, void *userdata,
 }
 
 int manager_notify_mm_bus_connected(Manager *m) {
+        _cleanup_(sd_event_unrefp) sd_event *event = NULL;
         int r;
 
         /*
@@ -984,6 +998,14 @@ int manager_notify_mm_bus_connected(Manager *m) {
                                      list_names_handler, m, NULL, NULL);
         if (r < 0)
             return log_warning_errno(r, "Could not LsitNames: %m");
+
+        r = sd_event_default(&event);
+        if (r < 0)
+                return log_error_errno(r, "Failed to initialize sd-event: %m");
+
+        r = setup_periodic_timer(m, event);
+        if (r < 0)
+                return log_error_errno(r, "Failed to set up periodic timer: %m");
 
         return 0;
 }

@@ -78,7 +78,6 @@ typedef enum {
         MODEM_RECONNECT_DONE,           /* No reconnect is required, e.g. connected. */
         MODEM_RECONNECT_SCHEDULED,      /* Reconnect is in progress. */
         MODEM_RECONNECT_WAITING,        /* Waiting for modem to recover. */
-        MODEM_RECONNECT_DISABLED,       /* Reconnect disabled after unre3coverable error. */
 } ModemReconnectState;
 
 int manager_notify_mm_bus_connected(Manager *manager);
