@@ -50,6 +50,8 @@ typedef struct Modem {
         sd_bus_slot *slot_connect;
 
         char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
+        char *manufacturer ;   /* The "Manufacturer" property */
+        char *model ;          /* The "Model" property */
 
         Hashmap *bearers_by_path;
         Hashmap *bearers_by_name;

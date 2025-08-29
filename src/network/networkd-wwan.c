@@ -140,6 +140,8 @@ Modem *modem_free(Modem *modem) {
         sd_bus_slot_unref(modem->slot_connect);
 
         free(modem->path);
+        free(modem->manufacturer);
+        free(modem->model);
 
         return mfree(modem);
 }

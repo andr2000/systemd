@@ -351,13 +351,15 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         if (e) {
                 r = sd_bus_error_get_errno(e);
                 log_full_errno(LOG_ERR, r,
-                               "Could not connect modem \"%s\": %s",
-                               modem->path, bus_error_message(e, r));
+                               "Could not connect modem %s %s: %s",
+                               modem->manufacturer, modem->model,
+                               bus_error_message(e, r));
                 return 0;
         }
 
         sd_bus_message_read(message, "o", &new_bearer);
-        log_info("ModemManager: connected, new bearer is at %s", new_bearer);
+        log_info("ModemManager: %s %s connected, new bearer is at %s",
+                 modem->manufacturer, modem->model, new_bearer);
 
         return 0;
 }
@@ -368,7 +370,8 @@ static void modem_simple_connect(Modem *modem) {
         if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
                 return;
 
-        log_error("ModemManager: starting simple connect on %s", modem->path);
+        log_error("ModemManager: starting simple connect on %s %s",
+                  modem->manufacturer, modem->model);
         r = sd_bus_call_method_async(modem->manager->bus,
                                      &modem->slot_getall,
                                      "org.freedesktop.ModemManager1",
@@ -385,8 +388,8 @@ static void modem_simple_connect(Modem *modem) {
          * timer and wait when it retries the connection attempt.
          */
         if (r < 0) {
-                log_warning_errno(r, "Could not start modem connection %s, will retry: %m",
-                                  modem->path);
+                log_warning_errno(r, "Could not start modem connection %s %s, will retry: %m",
+                                  modem->manufacturer, modem->model);
         }
 }
 
@@ -455,7 +458,8 @@ static int modem_on_state_change(Modem *modem, MMModemState old_state,
         /* Check if modem is still in failed state. */
         if (modem->state_fail_reason != MM_MODEM_STATE_FAILED_REASON_NONE) {
                 if (modem->state_fail_reason != old_fail_reason) {
-                        log_error("ModemManager: cannot schedule reconnect, modem is in failed state: %s",
+                        log_error("ModemManager: cannot schedule reconnect for %s %s, modem is in failed state: %s",
+                                  modem->manufacturer, modem->model,
                                   modem->state_fail_reason < __MM_MODEM_STATE_FAILED_REASON_MAX ?
                                   MODEM_STATE_FAILED_STR[modem->state_fail_reason] :
                                   "unknown reason");
@@ -477,7 +481,6 @@ static int modem_on_state_change(Modem *modem, MMModemState old_state,
          * later on.
          */
         modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
-        log_error("start simple connect from %s", __func__);
         modem_simple_connect(modem);
 
         return 0;
@@ -488,6 +491,8 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
         static const struct bus_properties_map map[] = {
                 { "State",             "i", NULL, offsetof(Modem, state) },
                 { "StateFailedReason", "u", NULL, offsetof(Modem, state_fail_reason) },
+                { "Manufacturer",      "s", NULL, offsetof(Modem, manufacturer) },
+                { "Model",             "s", NULL, offsetof(Modem, model) },
                 {}
         };
 
@@ -519,7 +524,8 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
         /* skip name: string "org.freedesktop.ModemManager1.Modem" */
         sd_bus_message_skip(message, "s");
 
-        r = bus_message_map_all_properties(message, map, BUS_MAP_BOOLEAN_AS_BOOL,
+        r = bus_message_map_all_properties(message, map,
+                                           BUS_MAP_BOOLEAN_AS_BOOL | BUS_MAP_STRDUP,
                                            ret_error, modem);
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
@@ -638,6 +644,8 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                 { "Bearers",       "a{sv}", modem_map_bearers, 0, },
                 { "State",             "i", NULL,              offsetof(Modem, state) },
                 { "StateFailedReason", "u", NULL,              offsetof(Modem, state_fail_reason) },
+                { "Manufacturer",      "s", NULL,              offsetof(Modem, manufacturer) },
+                { "Model",             "s", NULL,              offsetof(Modem, model) },
                 {}
         };
         Modem *modem = ASSERT_PTR(userdata);
@@ -668,7 +676,8 @@ static int modem_properties_changed_signal(sd_bus_message *message,
         /* skip name: string "org.freedesktop.ModemManager1.Bearer" */
         sd_bus_message_skip(message, "s");
 
-        r = bus_message_map_all_properties(message, map, BUS_MAP_BOOLEAN_AS_BOOL,
+        r = bus_message_map_all_properties(message, map,
+                                           BUS_MAP_BOOLEAN_AS_BOOL | BUS_MAP_STRDUP,
                                            ret_error, modem);
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
