@@ -14,14 +14,6 @@
 #include "networkd-route.h"
 #include "networkd-wwan.h"
 
-/* From ModemManager-enums.h */
-typedef enum {
-    MM_BEARER_IP_METHOD_UNKNOWN = 0,
-    MM_BEARER_IP_METHOD_PPP     = 1,
-    MM_BEARER_IP_METHOD_STATIC  = 2,
-    MM_BEARER_IP_METHOD_DHCP    = 3,
-} MMBearerIpMethod;
-
 Bearer *bearer_free(Bearer *b) {
         if (!b)
                 return NULL;

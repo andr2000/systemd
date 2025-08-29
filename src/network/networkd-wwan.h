@@ -8,6 +8,7 @@
 
 #include "in-addr-util.h"
 #include "network-util.h"
+#include "networkd-wwan-bus.h"
 
 typedef struct Link Link;
 typedef struct Manager Manager;
@@ -53,9 +54,9 @@ typedef struct Modem {
         Hashmap *bearers_by_path;
         Hashmap *bearers_by_name;
 
-        int state;
-        unsigned int state_fail_reason;
-        bool reconnecting;
+        MMModemState state;
+        MMModemStateFailedReason state_fail_reason;
+        ModemReconnectState reconnect_state;
 } Modem;
 
 int bearer_new(Modem *modem, const char *path, Bearer **ret);

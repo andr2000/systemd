@@ -11,47 +11,7 @@
 #include "networkd-wwan.h"
 #include "strv.h"
 
-/* From ModemManager-enums.h */
-typedef enum {
-        MM_BEARER_IP_FAMILY_NONE    = 0,
-        MM_BEARER_IP_FAMILY_IPV4    = 1 << 0,
-        MM_BEARER_IP_FAMILY_IPV6    = 1 << 1,
-        MM_BEARER_IP_FAMILY_IPV4V6  = 1 << 2,
-        MM_BEARER_IP_FAMILY_ANY     = 0xFFFFFFFF
-} MMBearerIpFamily;
-
-typedef enum {
-        MM_BEARER_TYPE_UNKNOWN        = 0,
-        MM_BEARER_TYPE_DEFAULT        = 1,
-        MM_BEARER_TYPE_DEFAULT_ATTACH = 2,
-        MM_BEARER_TYPE_DEDICATED      = 3
-} MMBearerType;
-
-typedef enum {
-        MM_MODEM_STATE_FAILED        = -1,
-        MM_MODEM_STATE_UNKNOWN       = 0,
-        MM_MODEM_STATE_INITIALIZING  = 1,
-        MM_MODEM_STATE_LOCKED        = 2,
-        MM_MODEM_STATE_DISABLED      = 3,
-        MM_MODEM_STATE_DISABLING     = 4,
-        MM_MODEM_STATE_ENABLING      = 5,
-        MM_MODEM_STATE_ENABLED       = 6,
-        MM_MODEM_STATE_SEARCHING     = 7,
-        MM_MODEM_STATE_REGISTERED    = 8,
-        MM_MODEM_STATE_DISCONNECTING = 9,
-        MM_MODEM_STATE_CONNECTING    = 10,
-        MM_MODEM_STATE_CONNECTED     = 11
-} MMModemState;
-
-typedef enum { /*< underscore_name=mm_modem_state_failed_reason >*/
-        MM_MODEM_STATE_FAILED_REASON_NONE                  = 0,
-        MM_MODEM_STATE_FAILED_REASON_UNKNOWN               = 1,
-        MM_MODEM_STATE_FAILED_REASON_SIM_MISSING           = 2,
-        MM_MODEM_STATE_FAILED_REASON_SIM_ERROR             = 3,
-        MM_MODEM_STATE_FAILED_REASON_UNKNOWN_CAPABILITIES  = 4,
-        MM_MODEM_STATE_FAILED_REASON_ESIM_WITHOUT_PROFILES = 5,
-        __MM_MODEM_STATE_FAILED_REASON_MAX                 = 6,
-} MMModemStateFailedReason;
+#define RECONNECT_TIMEOUT_SEC   5
 
 static const char * const MODEM_STATE_FAILED_STR[__MM_MODEM_STATE_FAILED_REASON_MAX] = {
         [MM_MODEM_STATE_FAILED_REASON_NONE]                  = "No error",
@@ -375,15 +335,52 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         return 0;
 }
 
+#if 0
+static int reconnect_timer_hanlder(sd_event_source *s, uint64_t usec,
+                                   void *userdata) {
+        Modem *modem = ASSERT_PTR(userdata);
+
+        if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
+                return 0;
+
+        (void) modem_connect(modem);
+        return 0;
+}
+
+static int modem_schedule_reconnect(Modem *modem) {
+        _cleanup_(sd_event_unrefp) sd_event *event = NULL;
+        int r;
+
+        if (modem->reconnect_state == MODEM_RECONNECT_DISABLED)
+                return 0;
+
+        r = sd_event_default(&event);
+        if (r < 0)
+                return log_error_errno(r, "Failed to allocate event loop for modem reconnect: %m");
+
+        r = sd_event_add_time_relative(event, NULL, CLOCK_MONOTONIC,
+                                       RECONNECT_TIMEOUT_SEC * USEC_PER_SEC, 0,
+                                       reconnect_timer_hanlder, modem);
+        if (r < 0)
+                return log_error_errno(r, "Failed to schedule modem reconnect timeout: %m\n");
+
+        log_error("ModemManager: scheduling reconnect in %d seconds for %s",
+                  RECONNECT_TIMEOUT_SEC, modem->path);
+
+        modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
+        return 0;
+}
+#endif
+
 static int modem_connect_handler(sd_bus_message *message, void *userdata,
                                  sd_bus_error *ret_error) {
         Modem *modem = ASSERT_PTR(userdata);
         const sd_bus_error *e;
+        const char *new_bearer;
         int r;
 
         assert(message);
 
-        log_error("\n\n\nJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ %s:%d %s path %s", __FILE__, __LINE__, __func__, modem->path);
         modem->slot_connect = sd_bus_slot_unref(modem->slot_connect);
 
         e = sd_bus_message_get_error(message);
@@ -393,51 +390,83 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
                                "Could not connect modem \"%s\": %s",
                                modem->path, bus_error_message(e, r));
 
+                //if (IN_SET(r, -EINVAL))
+                //        modem->reconnect_state = MODEM_RECONNECT_DISABLED;
                 return 0;
         }
 
-        {
-                const char *o;
-                sd_bus_message_read(message, "o", &o);
-                log_error("JJJJJJJJJJJJJJJJJJJ %s", o);
-        }
+        sd_bus_message_read(message, "o", &new_bearer);
+        log_info("ModemManager: connected, new bearer is at %s", new_bearer);
 
         return 0;
 }
 
-static int modem_on_disconnected(Modem *modem) {
+
+static int modem_on_state_change(Modem *modem, MMModemState old_state,
+                                 MMModemStateFailedReason old_fail_reason) {
         int r;
 
-        if (modem->state_fail_reason != MM_MODEM_STATE_FAILED_REASON_NONE) {
-                log_error("ModemManager: cannot reconnect, modem is in failed state: %s",
-                          modem->state_fail_reason < __MM_MODEM_STATE_FAILED_REASON_MAX ?
-                          MODEM_STATE_FAILED_STR[modem->state_fail_reason] :
-                          "unknown reason");
+        if (IN_SET(modem->state, MM_MODEM_STATE_CONNECTING,
+                   MM_MODEM_STATE_CONNECTED)) {
+                /*
+                 * Connection is ok or reconnect is already in progress: either
+                 * initiataed by us or an external entity. Make sure we do not
+                 * try to start reconnection logic and wait for the modem
+                 * state change signal and then decide if need be.
+                 * FIXME: we assume that it is not possible to be in the above
+                 * states if failed reason is not NONE, e.g. modem is all good.
+                 */
+                modem->reconnect_state = MODEM_RECONNECT_DONE;
                 return 0;
         }
 
-        if (modem->reconnecting) {
-                log_debug("ModemManager: %s is already reconnecting",
-                          modem->path);
+        if (modem->reconnect_state == MODEM_RECONNECT_DISABLED) {
+                /*
+                 * This means we tried to simple connect before and faced
+                 * unrecoverable issues. Do not try further.
+                 */
                 return 0;
         }
+
+        /* Check if modem is still in failed state. */
+        if (modem->state_fail_reason != MM_MODEM_STATE_FAILED_REASON_NONE) {
+                if (modem->state_fail_reason != old_fail_reason) {
+                        log_error("ModemManager: cannot schedule reconnect, modem is in failed state: %s",
+                                  modem->state_fail_reason < __MM_MODEM_STATE_FAILED_REASON_MAX ?
+                                  MODEM_STATE_FAILED_STR[modem->state_fail_reason] :
+                                  "unknown reason");
+
+                        /* Do not try to reconnect until modem has recovered. */
+                        modem->reconnect_state = MODEM_RECONNECT_WAITING;
+                }
+                return 0;
+        }
+
+        if (modem->reconnect_state == MODEM_RECONNECT_SCHEDULED) {
+                /* We are reconnecting now. */
+                return 0;
+        }
+
+        /* Modem is not in failed state and is not connected. */
+        modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
 
         log_error("ModemManager: starting simple connect on %s", modem->path);
-        r = sd_bus_call_method_async(
-                        modem->manager->bus,
-                        &modem->slot_getall,
-                        "org.freedesktop.ModemManager1",
-                        modem->path,
-                        "org.freedesktop.ModemManager1.Modem.Simple",
-                        "Connect",
-                        modem_connect_handler,
-                        modem,
-                        "a{sv}", 1, "apn", "s", "internet", NULL);
-        if (r < 0)
+        r = sd_bus_call_method_async(modem->manager->bus,
+                                     &modem->slot_getall,
+                                     "org.freedesktop.ModemManager1",
+                                     modem->path,
+                                     "org.freedesktop.ModemManager1.Modem.Simple",
+                                     "Connect",
+                                     modem_connect_handler,
+                                     modem,
+                                     "a{sv}", 1,
+                                     "apn1", "s", "internet",
+                                     NULL);
+        if (r < 0) {
                 return log_warning_errno(r, "Could not start modem connection %s: %m",
                                          modem->path);
+        }
 
-        modem->reconnecting = true;
         return 0;
 }
 
@@ -451,6 +480,8 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
 
         Modem *modem = ASSERT_PTR(userdata);
         const sd_bus_error *e;
+        MMModemState old_state;
+        MMModemStateFailedReason old_fail_reason;
         int r;
 
         assert(message);
@@ -469,6 +500,9 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
                 return 0;
         }
 
+        old_state = modem->state;
+        old_fail_reason = modem->state_fail_reason;
+
         /* skip name: string "org.freedesktop.ModemManager1.Modem" */
         sd_bus_message_skip(message, "s");
 
@@ -478,10 +512,7 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
                 return log_warning_errno(r, "Failed to parse properties of modem \"%s\": %s",
                                          modem->path, bus_error_message(ret_error, r));
 
-        if (modem->state != MM_MODEM_STATE_CONNECTED)
-                modem_on_disconnected(modem);
-
-        return 0;
+        return modem_on_state_change(modem, old_state, old_fail_reason);
 }
 
 static int modem_initialize(Modem *modem) {
@@ -598,6 +629,8 @@ static int modem_properties_changed_signal(sd_bus_message *message,
         };
         Modem *modem = ASSERT_PTR(userdata);
         int found_cnt;
+        MMModemState old_state;
+        MMModemStateFailedReason old_fail_reason;
         int r;
 
         /* skip name: string "org.freedesktop.ModemManager1.Modem" */
@@ -616,6 +649,9 @@ static int modem_properties_changed_signal(sd_bus_message *message,
         if (r < 0)
                 return log_warning_errno(r, "Failed to rewind properties of modem \"%s\"",
                                          modem->path);
+        old_state = modem->state;
+        old_fail_reason = modem->state_fail_reason;
+
         /* skip name: string "org.freedesktop.ModemManager1.Bearer" */
         sd_bus_message_skip(message, "s");
 
@@ -626,10 +662,7 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                                          modem->path,
                                          bus_error_message(ret_error, r));
 
-        if (modem->state != MM_MODEM_STATE_CONNECTED)
-                modem_on_disconnected(modem);
-
-        return 0;
+        return modem_on_state_change(modem, old_state, old_fail_reason);
 }
 
 static int modem_match_properties_changed(Modem *modem, const char *path) {
