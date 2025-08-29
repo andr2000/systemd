@@ -245,7 +245,6 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
 
         assert(message);
 
-        log_error("%s:%d %s path %s", __FILE__, __LINE__, __func__, b->path);
         b->slot_getall = sd_bus_slot_unref(b->slot_getall);
 
         e = sd_bus_message_get_error(message);
@@ -271,7 +270,6 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         if (r < 0)
                 return log_warning_errno(r, "Failed to count properties of bearer \"%s\": %s", b->path, bus_error_message(ret_error, r));
 
-        log_error("%s found %d properties changed\n", __func__, found_cnt);
         if (!found_cnt)
                 return 0;
 
@@ -285,7 +283,9 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of bearer \"%s\": %s", b->path, bus_error_message(ret_error, r));
 
-        log_error("Connected: %d interface %s", b->connected, b->name);
+        log_info("ModemManager: %s %s is%s connected, interface \"%s\"",
+                 b->modem->manufacturer, b->modem->model,
+                 b->connected ? "" : " not", b->name);
         return bearer_update_link(b);
 }
 
@@ -370,8 +370,8 @@ static void modem_simple_connect(Modem *modem) {
         if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
                 return;
 
-        log_error("ModemManager: starting simple connect on %s %s",
-                  modem->manufacturer, modem->model);
+        log_info("ModemManager: starting simple connect on %s %s",
+                 modem->manufacturer, modem->model);
         r = sd_bus_call_method_async(modem->manager->bus,
                                      &modem->slot_getall,
                                      "org.freedesktop.ModemManager1",
@@ -406,10 +406,8 @@ static int on_periodic_timer(sd_event_source *s, uint64_t usec, void *userdata) 
 
         e = sd_event_source_get_event(s);
 
-        HASHMAP_FOREACH(modem, manager->modems_by_path) {
-                log_error("start simple connect from %s", __func__);
+        HASHMAP_FOREACH(modem, manager->modems_by_path)
                 modem_simple_connect(modem);
-        }
 
         r = reset_timer(manager, e, &s);
         if (r < 0)
@@ -504,7 +502,6 @@ static int modem_get_all_handler(sd_bus_message *message, void *userdata,
 
         assert(message);
 
-        log_error("%s:%d %s path %s", __FILE__, __LINE__, __func__, modem->path);
         modem->slot_getall = sd_bus_slot_unref(modem->slot_getall);
 
         e = sd_bus_message_get_error(message);
@@ -662,7 +659,6 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                                          modem->path,
                                          bus_error_message(ret_error, r));
 
-        log_error("%s found %d properties changed\n", __func__, found_cnt);
         if (!found_cnt)
                 return 0;
 
@@ -854,16 +850,18 @@ static int interface_add_remove_signal(sd_bus_message *message, void *userdata,
         manager->slot = sd_bus_slot_unref(manager->slot);
 
         if (streq(message->member, "InterfacesAdded")) {
-                log_info("ModemManager: modem added");
-                enumerate_modem(manager, message->path);
+                log_info("ModemManager: %s modem added",
+                         sd_bus_message_get_path(message));
+                enumerate_modem(manager, sd_bus_message_get_path(message));
         } else {
                 const char *path;
                 int r;
 
-                log_info("ModemManager: modem removed");
                 r = sd_bus_message_read_basic(message, 'o', &path);
                 if (r < 0)
                         return r;
+
+                log_error("ModemManager: %s modem removed", path);
                 return remove_modem(manager, path);
         }
 
@@ -890,9 +888,9 @@ static int name_owner_changed_signal(sd_bus_message *message, void *userdata,
                 return 0;
 
         if (strlen(new_owner))
-                log_info("ModemManager service is now available");
+                log_info("ModemManager: service is available");
         else {
-                log_info("ModemManager service is not available");
+                log_info("ModemManager: service is not available");
                 modem_drop_all(manager);
                 return 0;
         }
@@ -983,7 +981,7 @@ static int list_names_handler(sd_bus_message *message, void *userdata,
         if (!found)
                  return 0;
 
-        log_info("ModemManager is available");
+        log_info("ModemManager: service available");
         return enumerate_modems(manager);
 }
 

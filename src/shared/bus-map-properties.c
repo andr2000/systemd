@@ -145,7 +145,6 @@ int bus_message_map_all_properties(
         assert(m);
         assert(map);
 
-        log_info("SSSSS signature %s\n", m->root_container.signature);
         r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}");
         if (r < 0) {
                 log_error("TYPE_ARRAY path %s iface %s member %s",
@@ -170,10 +169,8 @@ int bus_message_map_all_properties(
                                 break;
                         }
 
-                log_info("member: \"%s\"", member);
                 if (prop) {
                         r = sd_bus_message_peek_type(m, NULL, &contents);
-                        log_info("contents: \"%s\"", contents);
                         if (r < 0)
                                 return bus_log_parse_error_debug(r);
 

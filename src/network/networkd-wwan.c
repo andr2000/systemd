@@ -253,7 +253,6 @@ static int bearer_address_handler(sd_netlink *rtnl, sd_netlink_message *m, Reque
         if (r <= 0)
                 return r;
 
-        log_error("%s bearer_messages %u", __func__, link->bearer_messages);
         if (link->bearer_messages == 0) {
                 link->bearer_configured = true;
                 link_check_ready(link);
@@ -302,9 +301,6 @@ static int link_request_bearer_address(Link *link, int family, const union in_ad
         if (r < 0)
                 return log_link_warning_errno(link, r, "Failed to request address provided by bearer: %m");
 
-
-        log_error("%s bearer_messages %u", __func__, link->bearer_messages);
-
         return 0;
 }
 
@@ -317,7 +313,6 @@ static int bearer_route_handler(sd_netlink *rtnl, sd_netlink_message *m, Request
         if (r <= 0)
                 return r;
 
-        log_error("%s bearer_messages %u", __func__, link->bearer_messages);
         if (link->bearer_messages == 0) {
                 link->bearer_configured = true;
                 link_check_ready(link);
@@ -376,7 +371,6 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
         if (r < 0)
                 return log_link_warning_errno(link, r, "Failed to request gateway provided by bearer: %m");
 
-        log_error("%s bearer_messages %u", __func__, link->bearer_messages);
         return 0;
 }
 
@@ -494,7 +488,6 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
         if (ret < 0)
                 return ret;
 
-        log_error("%s bearer_messages %u", __func__, link->bearer_messages);
         if (link->bearer_messages == 0)
                 link->bearer_configured = true;
 
@@ -529,29 +522,19 @@ int bearer_update_link(Bearer *b) {
         assert(b->modem);
         assert(b->modem->manager);
 
-
-        log_error("%s:%d %s b->name \"%s\"\n", __FILE__, __LINE__, __func__, b->name);
         if (!b->name)
                 return 0;
 
-        if (link_get_by_name(b->modem->manager, b->name, &link) < 0) {
-                log_error("%s:%d %s link \"%p\"",
-                          __FILE__, __LINE__, __func__, link);
+        if (link_get_by_name(b->modem->manager, b->name, &link) < 0)
                 return 0;
-        }
-
-        log_error("%s:%d link %p ifindex %d\n",
-                  __FILE__, __LINE__, link, link->ifindex);
 
         r = link_reconfigure_impl(link, 0);
-        log_error("%s:%d link_reconfigure_impl ret %d\n", __FILE__, __LINE__, r);
         if (r < 0)
                 link_enter_failed(link);
         if (r != 0) /* r > 0 means interface is reconfigured. */
                 return r;
 
         r = link_apply_bearer_impl(link, b);
-        log_error("%s:%d link_apply_bearer_impl ret %d\n", __FILE__, __LINE__, r);
         if (r < 0)
                 link_enter_failed(link);
 
@@ -575,8 +558,6 @@ int bearer_update_link(Bearer *b) {
 void bearer_drop(Bearer *b) {
         assert(b);
 
-        log_error("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF %s name: %s path: %s", __func__,
-                  b->name, b->path);
         b->connected = false;
         b->apn = mfree(b->apn);
 
@@ -588,8 +569,6 @@ void bearer_drop(Bearer *b) {
 void modem_drop(Modem *modem) {
         assert(modem);
 
-        log_error("FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF %s path: %s", __func__,
-                  modem->path);
         modem_free(modem);
 }
 
