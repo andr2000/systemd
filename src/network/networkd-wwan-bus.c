@@ -106,15 +106,18 @@ static int map_ip4_config(sd_bus *bus, const char *member, sd_bus_message *m, sd
                 { "mtu",     "u", NULL,    offsetof(Bearer, ip4_mtu)       },
                 {}
         };
-
         Bearer *b = ASSERT_PTR(userdata);
 
         /*
-         * FIXME: Only default-attach bearer has ip-type field,
-         * so there is no chance to detect IP type in this one.
+         * FIXME: The "Ip4Config" property: if the bearer was configured
+         * for IPv4 addressing, upon activation this property contains the
+         * addressing details for assignment to the data interface.
+         * We may have both IPv4 and IPv6 configured.
          */
-
-        b->ip_type = ADDRESS_FAMILY_IPV4;
+        if (b->ip_type & ADDRESS_FAMILY_IPV6)
+                b->ip_type = ADDRESS_FAMILY_YES;
+        else
+                b->ip_type = ADDRESS_FAMILY_IPV4;
 
         return bus_message_map_all_properties(m, map, 0, error, userdata);
 }
@@ -131,44 +134,25 @@ static int map_ip6_config(sd_bus *bus, const char *member, sd_bus_message *m, sd
                 { "mtu",     "u", NULL,    offsetof(Bearer, ip6_mtu)       },
                 {}
         };
+        Bearer *b = ASSERT_PTR(userdata);
+
+        /*
+         * FIXME: The "Ip6Config" property: if the bearer was configured
+         * for IPv6 addressing, upon activation this property contains the
+         * addressing details for assignment to the data interface.
+         * We may have both IPv4 and IPv6 configured.
+         */
+        if (b->ip_type & ADDRESS_FAMILY_IPV4)
+                b->ip_type = ADDRESS_FAMILY_YES;
+        else
+                b->ip_type = ADDRESS_FAMILY_IPV6;
 
         return bus_message_map_all_properties(m, map, 0, error, userdata);
-}
-
-static int map_ip_type(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
-        AddressFamily *ip_type = ASSERT_PTR(userdata);
-        unsigned u;
-        int r;
-
-        assert(m);
-
-
-        r = sd_bus_message_read_basic(m, 'u', &u);
-        if (r < 0)
-                return r;
-
-        switch (u) {
-        case MM_BEARER_IP_FAMILY_NONE:
-                *ip_type = ADDRESS_FAMILY_NO;
-                break;
-        case MM_BEARER_IP_FAMILY_IPV4:
-                *ip_type = ADDRESS_FAMILY_IPV4;
-                break;
-        case MM_BEARER_IP_FAMILY_IPV6:
-                *ip_type = ADDRESS_FAMILY_IPV6;
-                break;
-        case MM_BEARER_IP_FAMILY_IPV4V6:
-                *ip_type = ADDRESS_FAMILY_YES;
-                break;
-        }
-
-        return 0;
 }
 
 static int map_properties(sd_bus *bus, const char *member, sd_bus_message *m, sd_bus_error *error, void *userdata) {
         static const struct bus_properties_map map[] = {
                 { "apn",     "s", NULL,        offsetof(Bearer, apn)     },
-                { "ip-type", "u", map_ip_type, offsetof(Bearer, ip_type) },
                 {}
         };
 
