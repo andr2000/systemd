@@ -350,6 +350,36 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static const char *prop_type_lookup(const char *key) {
+        const char * const * SIMPLE_PROP_TYPES =
+                STRV_MAKE_CONST(
+                          "profile-id",             "i",
+                          "profile-name",           "s",
+                          "apn",                    "s",
+                          "allowed-auth",           "u",
+                          "user",                   "s",
+                          "password",               "s",
+                          "ip-type",                "u",
+                          "apn-type",               "u",
+                          "access-type-preference", "u",
+                          "profile-enabled",        "b",
+                          "roaming-allowance",      "u",
+                          "profile-source",         "u",
+                          /* only to 3GPP (GSM/UMTS/LTE/5GNR) devices */
+                          "pin",                    "s",
+                          "operator-id",            "s"
+                );
+
+        if (!key)
+                return NULL;
+
+        STRV_FOREACH_PAIR(prop, type, SIMPLE_PROP_TYPES)
+                if (streq_ptr(*prop, key))
+                        return *type;
+
+        return NULL;
+}
+
 static int sd_bus_call_method_async_props(
                 sd_bus *bus,
                 sd_bus_slot **slot,
@@ -362,6 +392,7 @@ static int sd_bus_call_method_async_props(
                 Link *link) {
 
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        bool found;
         int r;
 
         assert_return(bus, -EINVAL);
@@ -370,6 +401,17 @@ static int sd_bus_call_method_async_props(
 
         if (!BUS_IS_OPEN(bus->state))
                 return -ENOTCONN;
+
+        /* Simple connection logic requires at least APN setting. */
+        found = false;
+        STRV_FOREACH(prop, link->network->modem_simple_connect_props)
+                if (streq_ptr(*prop, "apn"))
+                        found = true;
+
+        if (!found)
+                return log_error_errno(-EINVAL,
+                                       "ModemManager: At least APN property must be defined in %s",
+                                       link->network->filename);
 
         r = sd_bus_message_new_method_call(bus, &m, destination, path, interface, member);
         if (r < 0)
@@ -380,17 +422,19 @@ static int sd_bus_call_method_async_props(
                 return bus_log_create_error(r);
 
         STRV_FOREACH(prop, link->network->modem_simple_connect_props) {
+                const char *type;
                 char *left, *right;
 
                 r = split_pair(*prop, "=", &left, &right);
-                log_error("left %s right %s", left, right);
-                if (r < 0) {
+                type = prop_type_lookup(left);
+                if ((r < 0) || !type) {
                         log_error("ModemManager: malformed simple connect option: %s, file: %s",
                                   *prop, link->network->filename);
                         return -EINVAL;
                 }
+
                 r = sd_bus_message_append(m, "{sv}",
-                                          left, "s",  right);
+                                          left, type, right);
                 if (r < 0)
                         return bus_log_create_error(r);
         }
