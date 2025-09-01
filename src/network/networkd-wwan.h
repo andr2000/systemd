@@ -52,6 +52,7 @@ typedef struct Modem {
         char *path;            /* DBus path e.g /org/freedesktop/ModemManager/Modem/0 */
         char *manufacturer ;   /* The "Manufacturer" property */
         char *model ;          /* The "Model" property */
+        char *port_name;       /* MM_MODEM_PORT_TYPE_NET of Ports property */
 
         Hashmap *bearers_by_path;
         Hashmap *bearers_by_name;

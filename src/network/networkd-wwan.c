@@ -142,6 +142,7 @@ Modem *modem_free(Modem *modem) {
         free(modem->path);
         free(modem->manufacturer);
         free(modem->model);
+        free(modem->port_name);
 
         return mfree(modem);
 }

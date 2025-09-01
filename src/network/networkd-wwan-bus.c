@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: LGPL-2.1-or-later */
 
 #include "bus-error.h"
+#include "bus-internal.h"
 #include "bus-map-properties.h"
 #include "bus-match.h"
 #include "bus-message.h"
@@ -270,6 +271,7 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         log_info("ModemManager: %s %s is%s connected, interface \"%s\"",
                  b->modem->manufacturer, b->modem->model,
                  b->connected ? "" : " not", b->name);
+
         return bearer_update_link(b);
 }
 
@@ -348,25 +350,89 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static int sd_bus_call_method_async_props(
+                sd_bus *bus,
+                sd_bus_slot **slot,
+                const char *destination,
+                const char *path,
+                const char *interface,
+                const char *member,
+                sd_bus_message_handler_t callback,
+                void *userdata,
+                Link *link) {
+
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
+        int r;
+
+        assert_return(bus, -EINVAL);
+        assert_return(bus = bus_resolve(bus), -ENOPKG);
+        assert_return(!bus_origin_changed(bus), -ECHILD);
+
+        if (!BUS_IS_OPEN(bus->state))
+                return -ENOTCONN;
+
+        r = sd_bus_message_new_method_call(bus, &m, destination, path, interface, member);
+        if (r < 0)
+                return r;
+
+        r = sd_bus_message_open_container(m, 'a', "{sv}");
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        STRV_FOREACH(prop, link->network->modem_simple_connect_props) {
+                char *left, *right;
+
+                r = split_pair(*prop, "=", &left, &right);
+                log_error("left %s right %s", left, right);
+                if (r < 0) {
+                        log_error("ModemManager: malformed simple connect option: %s, file: %s",
+                                  *prop, link->network->filename);
+                        return -EINVAL;
+                }
+                r = sd_bus_message_append(m, "{sv}",
+                                          left, "s",  right);
+                if (r < 0)
+                        return bus_log_create_error(r);
+        }
+
+        r = sd_bus_message_close_container(m);
+        if (r < 0)
+                return bus_log_create_error(r);
+
+        return sd_bus_call_async(bus, slot, m, callback, userdata, 0);
+}
+
 static void modem_simple_connect(Modem *modem) {
+        Link *link;
         int r;
 
         if (modem->reconnect_state != MODEM_RECONNECT_SCHEDULED)
                 return;
 
-        log_info("ModemManager: starting simple connect on %s %s",
-                 modem->manufacturer, modem->model);
-        r = sd_bus_call_method_async(modem->manager->bus,
-                                     &modem->slot_getall,
-                                     "org.freedesktop.ModemManager1",
-                                     modem->path,
-                                     "org.freedesktop.ModemManager1.Modem.Simple",
-                                     "Connect",
-                                     modem_connect_handler,
-                                     modem,
-                                     "a{sv}", 1,
-                                     "apn", "s", "internet",
-                                     NULL);
+        /*
+         * If port name is not known yet then wait for the reconnect
+         * timer to trigger reconnection later on.
+         */
+        if (!modem->port_name)
+                return;
+
+        (void )link_get_by_name(modem->manager, modem->port_name, &link);
+        if (!link) {
+                log_error("ModemManager: cannot find link for %s",
+                          modem->port_name);
+                return;
+        }
+
+        log_info("ModemManager: starting simple connect on %s %s interface %s",
+                 modem->manufacturer, modem->model, modem->port_name);
+        r = sd_bus_call_method_async_props(modem->manager->bus,
+                                           &modem->slot_getall,
+                                           "org.freedesktop.ModemManager1",
+                                           modem->path,
+                                           "org.freedesktop.ModemManager1.Modem.Simple",
+                                           "Connect",
+                                           modem_connect_handler,
+                                           modem, link);
         /*
          * If we failed to (re)start the connection now then rely on the priodic
          * timer and wait when it retries the connection attempt.
@@ -618,6 +684,44 @@ static int modem_map_bearers(sd_bus *bus, const char *member, sd_bus_message *m,
         return 0;
 }
 
+static int modem_parse_ports(sd_bus_message *m, Modem *modem) {
+        int r;
+
+        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "(su)");
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        for (;;) {
+                const char *port_name;
+                uint32_t port_type;
+
+                r = sd_bus_message_read(m, "(su)", &port_name, &port_type);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                if (r == 0)
+                        break;
+
+                if (port_type == MM_MODEM_PORT_TYPE_NET) {
+                        free(modem->port_name);
+                        modem->port_name = strdup(port_name);
+                        break;
+                }
+        }
+
+        r = sd_bus_message_exit_container(m);
+        if (r < 0)
+                return bus_log_parse_error(r);
+
+        return 0;
+}
+
+static int modem_map_ports(sd_bus *bus, const char *member, sd_bus_message *m,
+                           sd_bus_error *error, void *userdata) {
+        Modem *modem = ASSERT_PTR(userdata);
+
+        return modem_parse_ports(m, modem);
+}
+
 static int modem_properties_changed_signal(sd_bus_message *message,
                                            void *userdata,
                                            sd_bus_error *ret_error) {
@@ -627,6 +731,7 @@ static int modem_properties_changed_signal(sd_bus_message *message,
                 { "StateFailedReason", "u", NULL,              offsetof(Modem, state_fail_reason) },
                 { "Manufacturer",      "s", NULL,              offsetof(Modem, manufacturer) },
                 { "Model",             "s", NULL,              offsetof(Modem, model) },
+                { "Ports",         "a{su}", modem_map_ports,   0,                                 },
                 {}
         };
         Modem *modem = ASSERT_PTR(userdata);
@@ -708,6 +813,7 @@ static int modems_save_path(const char *path, void *userdata) {
 
 static int enumerate_modem(Manager *m, const char *path) {
         _cleanup_strv_free_ char **bearers = NULL;
+        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
         _cleanup_(sd_bus_error_free) sd_bus_error error = SD_BUS_ERROR_NULL;
         Modem *modem;
         int r;
@@ -721,7 +827,8 @@ static int enumerate_modem(Manager *m, const char *path) {
         if (r != -ENOENT)
                 return 0;
 
-        log_info("ModemManager: modem found at %s, get bearers\n", path);
+        log_info("ModemManager: modem found at %s\n", path);
+        log_info("ModemManager: modem %s, get bearers\n", path);
 
         r = modem_new_and_initialize(m, path, &modem);
         if (r < 0)
@@ -743,6 +850,24 @@ static int enumerate_modem(Manager *m, const char *path) {
                 /* TODO: why void? */
                 (void) bearer_new_and_initialize(modem, *bearer);
         }
+
+        log_info("ModemManager: modem %s, get ports\n", path);
+
+        /* Get existing portss if any. */
+        r = sd_bus_get_property(m->bus,
+                                     "org.freedesktop.ModemManager1",
+                                     path,
+                                     "org.freedesktop.ModemManager1.Modem",
+                                     "Ports",
+                                     NULL, &reply, "a(su)");
+        if (r < 0)
+                return log_warning_errno(r, "Failed to get ports for modem %s",
+                                         path);
+
+        r = modem_parse_ports(reply, modem);
+        if (r < 0)
+                return log_warning_errno(r, "Failed to map ports for modem %s",
+                                         path);
 
         return modem_match_properties_changed(modem, path);
 }

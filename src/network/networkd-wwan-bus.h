@@ -74,6 +74,19 @@ typedef enum { /*< underscore_name=mm_core_error >*/
         MM_CORE_ERROR_THROTTLED       = 18, /*< nick=Throttled     >*/
 } MMCoreError;
 
+typedef enum { /*< underscore_name=mm_modem_port_type >*/
+        MM_MODEM_PORT_TYPE_UNKNOWN = 1,
+        MM_MODEM_PORT_TYPE_NET     = 2,
+        MM_MODEM_PORT_TYPE_AT      = 3,
+        MM_MODEM_PORT_TYPE_QCDM    = 4,
+        MM_MODEM_PORT_TYPE_GPS     = 5,
+        MM_MODEM_PORT_TYPE_QMI     = 6,
+        MM_MODEM_PORT_TYPE_MBIM    = 7,
+        MM_MODEM_PORT_TYPE_AUDIO   = 8,
+        MM_MODEM_PORT_TYPE_IGNORED = 9,
+        MM_MODEM_PORT_TYPE_XMMRPC  = 10,
+} MMModemPortType;
+
 typedef enum {
         MODEM_RECONNECT_DONE,           /* No reconnect is required, e.g. connected. */
         MODEM_RECONNECT_SCHEDULED,      /* Reconnect is in progress. */
