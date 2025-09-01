@@ -480,7 +480,7 @@ static int link_apply_bearer_impl(Link *link, Bearer *b) {
                 if (!route_is_marked(route))
                         continue;
 
-                r = route_remove(route, b->modem->manager);
+                r = route_remove(route, link->manager);
                 if (ret)
                         ret = r;
         }
