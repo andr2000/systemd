@@ -360,6 +360,21 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         return 0;
 }
 
+static MMBearerIpFamily prop_iptype_lookup(const char *key) {
+        if (streq_ptr("none", key))
+                return MM_BEARER_IP_FAMILY_NONE;
+        if (streq_ptr("ipv4", key))
+                return MM_BEARER_IP_FAMILY_IPV4;
+        if (streq_ptr("ipv6", key))
+                return MM_BEARER_IP_FAMILY_IPV6;
+        if (streq_ptr("ipv4v6", key))
+            return MM_BEARER_IP_FAMILY_IPV4V6;
+        if (streq_ptr("any", key))
+                return MM_BEARER_IP_FAMILY_ANY;
+        log_warning("ModemManager: ignoring unknown ip-type: %s, using any", key);
+        return MM_BEARER_IP_FAMILY_ANY;
+}
+
 static const char *prop_type_lookup(const char *key) {
         const char * const * SIMPLE_PROP_TYPES =
                 STRV_MAKE_CONST(
@@ -431,6 +446,14 @@ static int sd_bus_call_method_async_props(
                         log_error("ModemManager: malformed simple connect option: %s, file: %s",
                                   *prop, link->network->filename);
                         return -EINVAL;
+                }
+
+                if (streq_ptr(left, "ip-type")) {
+                        MMBearerIpFamily ip_type = prop_iptype_lookup(right);
+
+                        r = sd_bus_message_append(m, "{sv}", left, type,
+                                                  (uint32_t)ip_type);
+                        continue;
                 }
 
                 switch (type[0]) {
