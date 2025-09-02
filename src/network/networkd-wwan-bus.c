@@ -269,9 +269,10 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
         if (r < 0)
                 return log_warning_errno(r, "Failed to parse properties of bearer \"%s\": %s", b->path, bus_error_message(ret_error, r));
 
-        log_info("ModemManager: %s %s is%s connected, interface \"%s\"",
-                 b->modem->manufacturer, b->modem->model,
-                 b->connected ? "" : " not", b->name);
+        if (b->name)
+                log_info("ModemManager: %s %s is%s connected, interface %s",
+                         b->modem->manufacturer, b->modem->model,
+                         b->connected ? "" : " not", b->name);
 
         if (b->connected)
                 b->modem->reconnect_state = MODEM_RECONNECT_DONE;
@@ -315,8 +316,11 @@ static int bearer_new_and_initialize(Modem *modem, const char *path) {
         assert(path);
 
         r = bearer_new(modem, path, &b);
-        if (r < 0)
+        if (r < 0) {
+                if (r == -EEXIST)
+                        return 0;
                 return log_warning_errno(r, "Failed to allocate new bearer \"%s\": %m", path);
+        }
 
         r = bearer_initialize(b);
         if (r < 0)
@@ -906,7 +910,6 @@ static int enumerate_modem(Manager *m, const char *path) {
                 return 0;
 
         log_info("ModemManager: modem found at %s\n", path);
-        log_info("ModemManager: modem %s, get bearers\n", path);
 
         r = modem_new_and_initialize(m, path, &modem);
         if (r < 0)
@@ -929,8 +932,6 @@ static int enumerate_modem(Manager *m, const char *path) {
                 (void) bearer_new_and_initialize(modem, *bearer);
         }
 
-        log_info("ModemManager: modem %s, get ports\n", path);
-
         /* Get existing portss if any. */
         r = sd_bus_get_property(m->bus,
                                      "org.freedesktop.ModemManager1",
@@ -939,12 +940,12 @@ static int enumerate_modem(Manager *m, const char *path) {
                                      "Ports",
                                      NULL, &reply, "a(su)");
         if (r < 0)
-                return log_warning_errno(r, "Failed to get ports for modem %s",
+                return log_warning_errno(r, "Failed to get ports property for modem %s",
                                          path);
 
         r = modem_parse_ports(reply, modem);
         if (r < 0)
-                return log_warning_errno(r, "Failed to map ports for modem %s",
+                return log_warning_errno(r, "Failed to map ports property for modem %s",
                                          path);
 
         return modem_match_properties_changed(modem, path);

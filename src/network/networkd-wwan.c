@@ -15,6 +15,7 @@
 #include "networkd-wwan.h"
 
 Bearer *bearer_free(Bearer *b) {
+        log_error("%s", __func__);
         if (!b)
                 return NULL;
 
@@ -66,7 +67,8 @@ int bearer_new(Modem *modem, const char *path, Bearer **ret) {
         };
 
         r = hashmap_ensure_put(&modem->bearers_by_path, &bearer_hash_ops,
-                               b->path, b);
+                               b->path, b);\
+        log_error("%s hashmap_ensure_put %s ret %d", __func__, b->path, r);
         if (r < 0)
                 return r;
 
@@ -77,24 +79,50 @@ int bearer_new(Modem *modem, const char *path, Bearer **ret) {
 }
 
 int bearer_set_name(Bearer *b, const char *name) {
+        Bearer *old;
         int r;
 
         assert(b);
         assert(b->modem);
         assert(name);
 
+        log_error("%s name \"%s\" b->name \"%s\"", __func__, name, b->name);
+
         if (streq_ptr(b->name, name))
                 return 0;
 
-        if (b->name)
+        if (b->name) {
+                log_error("hashmap_remove \"%s\"", b->name);
                 hashmap_remove_value(b->modem->bearers_by_name, b->name, b);
+        }
+
+        if (isempty(name)) {
+                r = free_and_strdup(&b->name, NULL);
+                return 0;
+        }
 
         r = free_and_strdup(&b->name, name);
         if (r < 0)
                 return r;
 
-        return hashmap_ensure_put(&b->modem->bearers_by_name, &bearer_hash_ops,
-                                  b->name, b);
+        log_error("hashmap_ensure_put \"%s\"", b->name);
+
+        /*
+         * FIXME: it is possible during reconnect that if simple connect options
+         * are changed, e.g. externally modified .network file and then
+         * reloaded with 'networkctl reload' which may create a new bearer
+         * attached to the same inerface name, e.g. "wwan0" as the one already
+         * registered in the hash map. The order in which we parse the bearers
+         * properties is undetermined and it can be that we need to raplce the
+         * old one with the new one now.
+         */
+
+        old = hashmap_get(b->modem->bearers_by_name, name);
+        if (old)
+                hashmap_remove_value(old->modem->bearers_by_name, name, old);
+
+        return hashmap_ensure_put(&b->modem->bearers_by_name,
+                                  &bearer_hash_ops, b->name, b);
 }
 
 int bearer_get_by_path(Manager *manager, const char *path,
@@ -121,15 +149,27 @@ int bearer_get_by_path(Manager *manager, const char *path,
 }
 
 Modem *modem_free(Modem *modem) {
+        log_error("%s", __func__);
         if (!modem)
                 return NULL;
 
-        if (modem->bearers_by_name)
-                hashmap_free_with_destructor(modem->bearers_by_name,
-                                             bearer_drop);
-        if (modem->bearers_by_path)
+        if (modem->bearers_by_name) {
+                Bearer *b;
+                HASHMAP_FOREACH(b, modem->bearers_by_name) {
+                        log_error("%s by name \"%s\"",
+                                  __func__, b->name);
+                }
+                hashmap_free(modem->bearers_by_name);
+        }
+        if (modem->bearers_by_path) {
+                Bearer *b;
+                HASHMAP_FOREACH(b, modem->bearers_by_path) {
+                        log_error("%s by path \"%s\"",
+                                  __func__, b->path);
+                }
                 hashmap_free_with_destructor(modem->bearers_by_path,
                                              bearer_drop);
+        }
         if (modem->manager)
                 if (modem->path)
                         hashmap_remove_value(modem->manager->modems_by_path,
@@ -559,6 +599,7 @@ int bearer_update_link(Bearer *b) {
 void bearer_drop(Bearer *b) {
         assert(b);
 
+        log_error("%s bearer %p", __func__, b);
         b->connected = false;
         b->apn = mfree(b->apn);
 
