@@ -11,6 +11,7 @@
 #include "networkd-manager.h"
 #include "networkd-wwan-bus.h"
 #include "networkd-wwan.h"
+#include "parse-util.h"
 #include "strv.h"
 
 #define RECONNECT_TIMEOUT_SEC   30
@@ -392,7 +393,6 @@ static int sd_bus_call_method_async_props(
                 Link *link) {
 
         _cleanup_(sd_bus_message_unrefp) sd_bus_message *m = NULL;
-        bool found;
         int r;
 
         assert_return(bus, -EINVAL);
@@ -401,17 +401,6 @@ static int sd_bus_call_method_async_props(
 
         if (!BUS_IS_OPEN(bus->state))
                 return -ENOTCONN;
-
-        /* Simple connection logic requires at least APN setting. */
-        found = false;
-        STRV_FOREACH(prop, link->network->modem_simple_connect_props)
-                if (streq_ptr(*prop, "apn"))
-                        found = true;
-
-        if (!found)
-                return log_error_errno(-EINVAL,
-                                       "ModemManager: At least APN property must be defined in %s",
-                                       link->network->filename);
 
         r = sd_bus_message_new_method_call(bus, &m, destination, path, interface, member);
         if (r < 0)
@@ -424,6 +413,8 @@ static int sd_bus_call_method_async_props(
         STRV_FOREACH(prop, link->network->modem_simple_connect_props) {
                 const char *type;
                 char *left, *right;
+                signed int right_i;
+                unsigned int right_u;
 
                 r = split_pair(*prop, "=", &left, &right);
                 type = prop_type_lookup(left);
@@ -433,8 +424,34 @@ static int sd_bus_call_method_async_props(
                         return -EINVAL;
                 }
 
-                r = sd_bus_message_append(m, "{sv}",
-                                          left, type, right);
+                switch (type[0]) {
+                case SD_BUS_TYPE_BOOLEAN:
+                        r = parse_boolean(right);
+                        if (r < 0)
+                                return -EINVAL;
+                        r = sd_bus_message_append(m, "{sv}", left, type,
+                                                  (bool)r);
+                        break;
+                case SD_BUS_TYPE_INT32:
+                        r = safe_atoi(right, &right_i);
+                        if (r < 0)
+                                return -EINVAL;
+                        r = sd_bus_message_append(m, "{sv}", left, type,
+                                                  (int32_t)right_i);
+                        break;
+                case SD_BUS_TYPE_UINT32:
+                        r = safe_atou(right, &right_u);
+                        if (r < 0)
+                                return -EINVAL;
+                        r = sd_bus_message_append(m, "{sv}", left, type,
+                                                  (uint32_t)right_u);
+                        break;
+                case SD_BUS_TYPE_STRING:
+                        _fallthrough_;
+                default:
+                        r = sd_bus_message_append(m, "{sv}", left, type, right);
+                        break;
+                }
                 if (r < 0)
                         return bus_log_create_error(r);
         }
