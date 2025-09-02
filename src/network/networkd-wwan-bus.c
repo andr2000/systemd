@@ -354,7 +354,7 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
         }
 
         sd_bus_message_read(message, "o", &new_bearer);
-        log_info("ModemManager: %s %s connected, new bearer is at %s",
+        log_info("ModemManager: %s %s connected, bearer is at %s",
                  modem->manufacturer, modem->model, new_bearer);
 
         return 0;

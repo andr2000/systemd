@@ -97,7 +97,7 @@ int bearer_set_name(Bearer *b, const char *name) {
         }
 
         if (isempty(name)) {
-                r = free_and_strdup(&b->name, NULL);
+                b->name = mfree(b->name);
                 return 0;
         }
 
@@ -118,8 +118,10 @@ int bearer_set_name(Bearer *b, const char *name) {
          */
 
         old = hashmap_get(b->modem->bearers_by_name, name);
-        if (old)
+        if (old) {
                 hashmap_remove_value(old->modem->bearers_by_name, name, old);
+                old->name = mfree(old->name);
+        }
 
         return hashmap_ensure_put(&b->modem->bearers_by_name,
                                   &bearer_hash_ops, b->name, b);
@@ -156,24 +158,24 @@ Modem *modem_free(Modem *modem) {
         if (modem->bearers_by_name) {
                 Bearer *b;
                 HASHMAP_FOREACH(b, modem->bearers_by_name) {
-                        log_error("%s by name \"%s\"",
-                                  __func__, b->name);
+                        log_error("%s by name \"%s\" path %s",
+                                  __func__, b->name, b->path);
                 }
                 hashmap_free(modem->bearers_by_name);
         }
+
         if (modem->bearers_by_path) {
                 Bearer *b;
                 HASHMAP_FOREACH(b, modem->bearers_by_path) {
-                        log_error("%s by path \"%s\"",
-                                  __func__, b->path);
+                        log_error("%s by path %s name \"%s\"",
+                                  __func__, b->path, b->name);
                 }
-                hashmap_free_with_destructor(modem->bearers_by_path,
-                                             bearer_drop);
+                hashmap_free(modem->bearers_by_path);
         }
         if (modem->manager)
-                if (modem->path)
-                        hashmap_remove_value(modem->manager->modems_by_path,
-                                             modem->path, modem);
+                hashmap_remove_value(modem->manager->modems_by_path,
+                                     modem->path, modem);
+
         sd_bus_slot_unref(modem->slot_getall);
         sd_bus_slot_unref(modem->slot_propertieschanged);
         sd_bus_slot_unref(modem->slot_statechanged);
@@ -615,6 +617,5 @@ void modem_drop(Modem *modem) {
 }
 
 void modem_drop_all(Manager *m) {
-        m->modems_by_path = hashmap_free_with_destructor(m->modems_by_path,
-                                                         modem_drop);
+        hashmap_free(m->modems_by_path);
 }
