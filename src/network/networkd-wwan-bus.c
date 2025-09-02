@@ -273,6 +273,9 @@ static int bearer_get_all_handler(sd_bus_message *message, void *userdata, sd_bu
                  b->modem->manufacturer, b->modem->model,
                  b->connected ? "" : " not", b->name);
 
+        if (b->connected)
+                b->modem->reconnect_state = MODEM_RECONNECT_DONE;
+
         return bearer_update_link(b);
 }
 
@@ -341,6 +344,8 @@ static int modem_connect_handler(sd_bus_message *message, void *userdata,
                                "Could not connect modem %s %s: %s",
                                modem->manufacturer, modem->model,
                                bus_error_message(e, r));
+
+                modem->reconnect_state = MODEM_RECONNECT_WAITING;
                 return 0;
         }
 
@@ -517,8 +522,20 @@ static int on_periodic_timer(sd_event_source *s, uint64_t usec, void *userdata) 
 
         e = sd_event_source_get_event(s);
 
-        HASHMAP_FOREACH(modem, manager->modems_by_path)
+        HASHMAP_FOREACH(modem, manager->modems_by_path) {
+                /*
+                 * We might be rate limiting the reconnection, e.g. if wrong
+                 * simple connect options are provided modem manager might try
+                 * to connect (registered->connecting) and fail soon
+                 * (connecting->registered). To rate limit such a case we set
+                 * MODEM_RECONNECT_WAITING state, so using this timer we can
+                 * limit the requests and wait, for example, for
+                 * network reconfigure wwanX.
+                 */
+                if (modem->reconnect_state == MODEM_RECONNECT_WAITING)
+                        modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
                 modem_simple_connect(modem);
+        }
 
         r = reset_timer(manager, e, &s);
         if (r < 0)
@@ -558,9 +575,9 @@ static int modem_on_state_change(Modem *modem, MMModemState old_state,
                  * try to start reconnection logic and wait for the modem
                  * state change signal and then decide if need be.
                  * FIXME: we assume that it is not possible to be in the above
-                 * states if failed reason is not NONE, e.g. modem is all good.
+                 * modem states e.g. connecting|connected if failed reason is
+                 * not NONE, e.g. modem is all good.
                  */
-                modem->reconnect_state = MODEM_RECONNECT_DONE;
                 return 0;
         }
 
