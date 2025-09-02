@@ -15,7 +15,6 @@
 #include "networkd-wwan.h"
 
 Bearer *bearer_free(Bearer *b) {
-        log_error("%s", __func__);
         if (!b)
                 return NULL;
 
@@ -68,7 +67,6 @@ int bearer_new(Modem *modem, const char *path, Bearer **ret) {
 
         r = hashmap_ensure_put(&modem->bearers_by_path, &bearer_hash_ops,
                                b->path, b);\
-        log_error("%s hashmap_ensure_put %s ret %d", __func__, b->path, r);
         if (r < 0)
                 return r;
 
@@ -86,15 +84,11 @@ int bearer_set_name(Bearer *b, const char *name) {
         assert(b->modem);
         assert(name);
 
-        log_error("%s name \"%s\" b->name \"%s\"", __func__, name, b->name);
-
         if (streq_ptr(b->name, name))
                 return 0;
 
-        if (b->name) {
-                log_error("hashmap_remove \"%s\"", b->name);
+        if (b->name)
                 hashmap_remove_value(b->modem->bearers_by_name, b->name, b);
-        }
 
         if (isempty(name)) {
                 b->name = mfree(b->name);
@@ -104,8 +98,6 @@ int bearer_set_name(Bearer *b, const char *name) {
         r = free_and_strdup(&b->name, name);
         if (r < 0)
                 return r;
-
-        log_error("hashmap_ensure_put \"%s\"", b->name);
 
         /*
          * FIXME: it is possible during reconnect that if simple connect options
@@ -151,27 +143,15 @@ int bearer_get_by_path(Manager *manager, const char *path,
 }
 
 Modem *modem_free(Modem *modem) {
-        log_error("%s", __func__);
         if (!modem)
                 return NULL;
 
-        if (modem->bearers_by_name) {
-                Bearer *b;
-                HASHMAP_FOREACH(b, modem->bearers_by_name) {
-                        log_error("%s by name \"%s\" path %s",
-                                  __func__, b->name, b->path);
-                }
+        if (modem->bearers_by_name)
                 hashmap_free(modem->bearers_by_name);
-        }
 
-        if (modem->bearers_by_path) {
-                Bearer *b;
-                HASHMAP_FOREACH(b, modem->bearers_by_path) {
-                        log_error("%s by path %s name \"%s\"",
-                                  __func__, b->path, b->name);
-                }
+        if (modem->bearers_by_path)
                 hashmap_free(modem->bearers_by_path);
-        }
+
         if (modem->manager)
                 hashmap_remove_value(modem->manager->modems_by_path,
                                      modem->path, modem);
@@ -601,7 +581,6 @@ int bearer_update_link(Bearer *b) {
 void bearer_drop(Bearer *b) {
         assert(b);
 
-        log_error("%s bearer %p", __func__, b);
         b->connected = false;
         b->apn = mfree(b->apn);
 
