@@ -61,6 +61,7 @@
 #include "networkd-state-file.h"
 #include "networkd-sysctl.h"
 #include "networkd-wifi.h"
+#include "networkd-wwan.h"
 #include "set.h"
 #include "socket-util.h"
 #include "stdio-util.h"
@@ -523,6 +524,9 @@ void link_check_ready(Link *link) {
         if (!link->sr_iov_configured)
                 return (void) log_link_debug(link, "%s(): SR-IOV is not configured.", __func__);
 
+        if (!link->bearer_configured)
+                return (void) log_link_debug(link, "%s(): Bearer has not been applied.", __func__);
+
         /* IPv6LL is assigned after the link gains its carrier. */
         if (!link->network->configure_without_carrier &&
             link_ipv6ll_enabled(link) &&
@@ -532,7 +536,7 @@ void link_check_ready(Link *link) {
         /* All static addresses must be ready. */
         bool has_static_address = false;
         SET_FOREACH(a, link->addresses) {
-                if (a->source != NETWORK_CONFIG_SOURCE_STATIC)
+                if (!link->bearer_configured && a->source != NETWORK_CONFIG_SOURCE_STATIC)
                         continue;
                 if (!address_is_ready(a))
                         return (void) log_link_debug(link, "%s(): static address %s is not ready.", __func__,
@@ -1281,6 +1285,10 @@ static int link_configure(Link *link) {
         if (r < 0)
                 return r;
 
+        r = link_apply_bearer(link);
+        if (r < 0)
+                return r;
+
         if (!link_has_carrier(link))
                 return 0;
 
@@ -1289,11 +1297,14 @@ static int link_configure(Link *link) {
 
 static int link_get_network(Link *link, Network **ret) {
         Network *network;
+        Bearer *b = NULL;
         int r;
 
         assert(link);
         assert(link->manager);
         assert(ret);
+
+        (void) link_get_bearer(link, &b);
 
         ORDERED_HASHMAP_FOREACH(network, link->manager->networks) {
                 bool warn = false;
