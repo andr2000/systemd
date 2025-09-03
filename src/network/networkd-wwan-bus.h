@@ -52,28 +52,6 @@ typedef enum {
         MM_BEARER_IP_METHOD_DHCP    = 3,
 } MMBearerIpMethod;
 
-typedef enum { /*< underscore_name=mm_core_error >*/
-        MM_CORE_ERROR_FAILED          = 0,  /*< nick=Failed        >*/
-        MM_CORE_ERROR_CANCELLED       = 1,  /*< nick=Cancelled     >*/
-        MM_CORE_ERROR_ABORTED         = 2,  /*< nick=Aborted       >*/
-        MM_CORE_ERROR_UNSUPPORTED     = 3,  /*< nick=Unsupported   >*/
-        MM_CORE_ERROR_NO_PLUGINS      = 4,  /*< nick=NoPlugins     >*/
-        MM_CORE_ERROR_UNAUTHORIZED    = 5,  /*< nick=Unauthorized  >*/
-        MM_CORE_ERROR_INVALID_ARGS    = 6,  /*< nick=InvalidArgs   >*/
-        MM_CORE_ERROR_IN_PROGRESS     = 7,  /*< nick=InProgress    >*/
-        MM_CORE_ERROR_WRONG_STATE     = 8,  /*< nick=WrongState    >*/
-        MM_CORE_ERROR_CONNECTED       = 9,  /*< nick=Connected     >*/
-        MM_CORE_ERROR_TOO_MANY        = 10, /*< nick=TooMany       >*/
-        MM_CORE_ERROR_NOT_FOUND       = 11, /*< nick=NotFound      >*/
-        MM_CORE_ERROR_RETRY           = 12, /*< nick=Retry         >*/
-        MM_CORE_ERROR_EXISTS          = 13, /*< nick=Exists        >*/
-        MM_CORE_ERROR_WRONG_SIM_STATE = 14, /*< nick=WrongSimState >*/
-        MM_CORE_ERROR_RESET_AND_RETRY = 15, /*< nick=ResetRetry    >*/
-        MM_CORE_ERROR_TIMEOUT         = 16, /*< nick=Timeout       >*/
-        MM_CORE_ERROR_PROTOCOL        = 17, /*< nick=Protocol      >*/
-        MM_CORE_ERROR_THROTTLED       = 18, /*< nick=Throttled     >*/
-} MMCoreError;
-
 typedef enum { /*< underscore_name=mm_modem_port_type >*/
         MM_MODEM_PORT_TYPE_UNKNOWN = 1,
         MM_MODEM_PORT_TYPE_NET     = 2,
@@ -86,6 +64,17 @@ typedef enum { /*< underscore_name=mm_modem_port_type >*/
         MM_MODEM_PORT_TYPE_IGNORED = 9,
         MM_MODEM_PORT_TYPE_XMMRPC  = 10,
 } MMModemPortType;
+
+typedef enum { /*< underscore_name=mm_bearer_allowed_auth >*/
+        MM_BEARER_ALLOWED_AUTH_UNKNOWN  = 0,
+        /* bits 0..4 order match Ericsson device bitmap */
+        MM_BEARER_ALLOWED_AUTH_NONE     = 1 << 0,
+        MM_BEARER_ALLOWED_AUTH_PAP      = 1 << 1,
+        MM_BEARER_ALLOWED_AUTH_CHAP     = 1 << 2,
+        MM_BEARER_ALLOWED_AUTH_MSCHAP   = 1 << 3,
+        MM_BEARER_ALLOWED_AUTH_MSCHAPV2 = 1 << 4,
+        MM_BEARER_ALLOWED_AUTH_EAP      = 1 << 5,
+} MMBearerAllowedAuth;
 
 typedef enum {
         MODEM_RECONNECT_DONE,           /* No reconnect is required, e.g. connected. */

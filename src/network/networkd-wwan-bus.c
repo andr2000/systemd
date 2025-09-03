@@ -371,25 +371,38 @@ static MMBearerIpFamily prop_iptype_lookup(const char *key) {
             return MM_BEARER_IP_FAMILY_IPV4V6;
         if (streq_ptr("any", key))
                 return MM_BEARER_IP_FAMILY_ANY;
+
         log_warning("ModemManager: ignoring unknown ip-type: %s, using any", key);
         return MM_BEARER_IP_FAMILY_ANY;
+}
+
+static MMBearerAllowedAuth prop_auth_lookup(const char *key) {
+        if (streq_ptr("none", key))
+                return MM_BEARER_ALLOWED_AUTH_NONE;
+        if (streq_ptr("pap", key))
+                return MM_BEARER_ALLOWED_AUTH_PAP;
+        if (streq_ptr("chap", key))
+                return MM_BEARER_ALLOWED_AUTH_CHAP;
+        if (streq_ptr("mschap", key))
+            return MM_BEARER_ALLOWED_AUTH_MSCHAP;
+        if (streq_ptr("mschapv2", key))
+                return MM_BEARER_ALLOWED_AUTH_MSCHAPV2;
+        if (streq_ptr("eap", key))
+                return MM_BEARER_ALLOWED_AUTH_EAP;
+
+        log_warning("ModemManager: ignoring unknown allowed-auth: %s, using none", key);
+        return MM_BEARER_ALLOWED_AUTH_NONE;
 }
 
 static const char *prop_type_lookup(const char *key) {
         const char * const * SIMPLE_PROP_TYPES =
                 STRV_MAKE_CONST(
-                          "profile-id",             "i",
-                          "profile-name",           "s",
                           "apn",                    "s",
                           "allowed-auth",           "u",
                           "user",                   "s",
                           "password",               "s",
                           "ip-type",                "u",
-                          "apn-type",               "u",
-                          "access-type-preference", "u",
-                          "profile-enabled",        "b",
-                          "roaming-allowance",      "u",
-                          "profile-source",         "u",
+                          "allow-roaming",          "b",
                           /* only to 3GPP (GSM/UMTS/LTE/5GNR) devices */
                           "pin",                    "s",
                           "operator-id",            "s"
@@ -453,6 +466,14 @@ static int sd_bus_call_method_async_props(
 
                         r = sd_bus_message_append(m, "{sv}", left, type,
                                                   (uint32_t)ip_type);
+                        continue;
+                }
+
+                if (streq_ptr(left, "allowed-auth")) {
+                        MMBearerAllowedAuth auth = prop_auth_lookup(right);
+
+                        r = sd_bus_message_append(m, "{sv}", left, type,
+                                                  (uint32_t)auth);
                         continue;
                 }
 
