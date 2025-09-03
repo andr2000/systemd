@@ -65,8 +65,7 @@ int bearer_new(Modem *modem, const char *path, Bearer **ret) {
                 .path = TAKE_PTR(p),
         };
 
-        r = hashmap_ensure_put(&modem->bearers_by_path, &bearer_hash_ops,
-                               b->path, b);\
+        r = hashmap_ensure_put(&modem->bearers_by_path, &bearer_hash_ops, b->path, b);\
         if (r < 0)
                 return r;
 
@@ -119,8 +118,7 @@ int bearer_set_name(Bearer *b, const char *name) {
                                   &bearer_hash_ops, b->name, b);
 }
 
-int bearer_get_by_path(Manager *manager, const char *path,
-                       Modem **ret_modem, Bearer **ret_bearer) {
+int bearer_get_by_path(Manager *manager, const char *path, Modem **ret_modem, Bearer **ret_bearer) {
         Modem *modem;
         Bearer *b;
 
@@ -153,8 +151,7 @@ Modem *modem_free(Modem *modem) {
                 hashmap_free(modem->bearers_by_path);
 
         if (modem->manager)
-                hashmap_remove_value(modem->manager->modems_by_path,
-                                     modem->path, modem);
+                hashmap_remove_value(modem->manager->modems_by_path, modem->path, modem);
 
         sd_bus_slot_unref(modem->slot_getall);
         sd_bus_slot_unref(modem->slot_propertieschanged);
@@ -198,13 +195,13 @@ int modem_new(Manager *m, const char *path, Modem **ret) {
                 .path = TAKE_PTR(p),
         };
 
-        r = hashmap_ensure_put(&m->modems_by_path, &modems_hash_ops,
-                               modem->path, modem);
+        r = hashmap_ensure_put(&m->modems_by_path, &modems_hash_ops, modem->path, modem);
         if (r < 0)
                 return r;
 
         if (ret)
                 *ret = modem;
+
         TAKE_PTR(modem);
         return 0;
 }
@@ -298,7 +295,9 @@ static int link_request_bearer_address(Link *link, int family, const union in_ad
 
         /* prefixlen is not checked when parsed DBus message. Let's check it here. */
         if (prefixlen > (family == AF_INET ? 32 : 128)) {
-                log_link_debug(link, "Bearer has invalid prefix length %u for %s address, ignoring.",
+                log_link_debug(
+                               link,
+                               "Bearer has invalid prefix length %u for %s address, ignoring.",
                                prefixlen,
                                family == AF_INET ? "IPv4" : "IPv6");
                 return 0;
@@ -318,7 +317,6 @@ static int link_request_bearer_address(Link *link, int family, const union in_ad
         else
                 address_unmark(existing);
 
-        log_address_debug(address, "VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV", link);
         r = link_request_address(link, TAKE_PTR(address), &link->bearer_messages,
                                  bearer_address_handler, NULL);
         if (r < 0)
@@ -344,7 +342,11 @@ static int bearer_route_handler(sd_netlink *rtnl, sd_netlink_message *m, Request
         return 0;
 }
 
-static int link_request_bearer_route(Link *link, int family, const union in_addr_union *gw, const union in_addr_union *prefsrc) {
+static int link_request_bearer_route(
+                Link *link,
+                int family,
+                const union in_addr_union *gw,
+                const union in_addr_union *prefsrc) {
         _cleanup_(route_unrefp) Route *route = NULL;
         Route *existing;
         int r;
@@ -358,7 +360,7 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
                 return 0;
 
         /*
-         * HACK: Allow not setting the default route via
+         * FIXME: Allow not setting the default route via
          * DHCPv4.UseGateway option
          */
         if (link->network->dhcp_use_gateway == 0)
@@ -389,8 +391,7 @@ static int link_request_bearer_route(Link *link, int family, const union in_addr
         else
                 route_unmark(existing);
 
-        r = link_request_route(link, TAKE_PTR(route), &link->bearer_messages,
-                               bearer_route_handler);
+        r = link_request_route(link, TAKE_PTR(route), &link->bearer_messages, bearer_route_handler);
         if (r < 0)
                 return log_link_warning_errno(link, r, "Failed to request gateway provided by bearer: %m");
 
