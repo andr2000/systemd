@@ -985,11 +985,7 @@ static int modem_match_properties_changed(Modem *modem, const char *path) {
         return 0;
 }
 
-static int add_modem(Manager *m, const char *path, sd_bus_message *message, sd_bus_error *ret_error) {
-        _cleanup_strv_free_ char **bearers = NULL;
-        _cleanup_(sd_bus_message_unrefp) sd_bus_message *reply = NULL;
-        Modem *modem;
-        int r;
+static int modem_add(Manager *m, const char *path, sd_bus_message *message, sd_bus_error *ret_error) {
         static const struct bus_properties_map map[] = {
                 { "Bearers",           "ao",    modem_map_bearers_initial, 0,                                 },
                 { "State",             "i",     NULL,                      offsetof(Modem, state)             },
@@ -999,6 +995,8 @@ static int add_modem(Manager *m, const char *path, sd_bus_message *message, sd_b
                 { "Ports",             "a{su}", modem_map_ports,           0,                                 },
                 {}
         };
+        Modem *modem;
+        int r;
 
         r = modem_get_by_path(m, path, &modem);
         if (r != -ENOENT)
@@ -1017,7 +1015,7 @@ static int add_modem(Manager *m, const char *path, sd_bus_message *message, sd_b
         return modem_match_properties_changed(modem, path);
 }
 
-static int remove_modem(Manager *m, const char *path) {
+static int modem_remove(Manager *m, const char *path) {
         Modem *modem;
         int r;
 
@@ -1045,7 +1043,6 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
                 return 0;
         }
 
-        /* This is a{oa{sa{sv}}} with all the modems and their properties. */
         r = sd_bus_message_enter_container(message, SD_BUS_TYPE_ARRAY, "{oa{sa{sv}}}");
         if (r < 0)
                 return bus_log_parse_error_debug(r);
@@ -1067,9 +1064,9 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
                                 return bus_log_parse_error(r);
 
                         if (streq("org.freedesktop.ModemManager1.Modem", interface_name)) {
-                                r = add_modem(manager, modem_path, message, ret_error);
+                                r = modem_add(manager, modem_path, message, ret_error);
                                 if (r < 0)
-                                        return bus_log_parse_error(r);
+                                        return log_error_errno(r, "Failed to add modem at %s: %m", modem_path);
                         } else {
                                 r = sd_bus_message_skip(message, "a{sv}");
                                 if (r < 0)
@@ -1084,6 +1081,7 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
                 r = sd_bus_message_exit_container(message);
                 if (r < 0)
                         return bus_log_parse_error(r);
+
                 r = sd_bus_message_exit_container(message);
                 if (r < 0)
                         return bus_log_parse_error(r);
@@ -1137,7 +1135,7 @@ static int interface_add_remove_signal(sd_bus_message *message, void *userdata, 
                         return r;
 
                 log_error("ModemManager: %s modem removed", path);
-                return remove_modem(manager, path);
+                return modem_remove(manager, path);
         }
 
         return enumerate_modems(manager);
