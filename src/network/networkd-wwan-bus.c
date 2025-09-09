@@ -646,7 +646,7 @@ static void modem_simple_connect(Modem *modem) {
         log_info("ModemManager: starting simple connect on %s %s interface %s",
                  modem->manufacturer, modem->model, modem->port_name);
         r = sd_bus_call_method_async_props(modem->manager->bus,
-                                           &modem->slot_getall,
+                                           &modem->slot_connect,
                                            "org.freedesktop.ModemManager1",
                                            modem->path,
                                            "org.freedesktop.ModemManager1.Modem.Simple",
