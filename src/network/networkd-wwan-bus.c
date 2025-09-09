@@ -683,9 +683,11 @@ static int on_periodic_timer(sd_event_source *s, uint64_t usec, void *userdata) 
                  * (connecting->registered). To rate limit such a case we set
                  * MODEM_RECONNECT_WAITING state, so using this timer we can
                  * limit the requests and wait, for example, for
-                 * network reconfigure wwanX.
+                 * network reconfigure wwanX. Still do not try to reconnect
+                 * modems in failed state yet.
                  */
-                if (modem->reconnect_state == MODEM_RECONNECT_WAITING)
+                if ((modem->reconnect_state == MODEM_RECONNECT_WAITING) &&
+                    (modem->state_fail_reason == MM_MODEM_STATE_FAILED_REASON_NONE))
                         modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
                 modem_simple_connect(modem);
         }
@@ -828,7 +830,7 @@ static int modem_map_bearers_on_props(
                 sd_bus_error *error,
                 void *userdata) {
         Modem *modem = ASSERT_PTR(userdata);
-        _cleanup_strv_free_ char **paths = NULL, **path;
+        _cleanup_strv_free_ char **paths = NULL;
         int r;
 
         log_info("ModemManager: bearers created at path %s", sd_bus_message_get_path(m));
@@ -837,8 +839,7 @@ static int modem_map_bearers_on_props(
         if (r < 0)
                 return bus_log_parse_error(r);
 
-        // FOREACH_STRV
-        for (path = paths; *path != NULL; path++)
+        STRV_FOREACH(path, paths)
                 (void) bearer_new_and_initialize(modem, *path);
 
         return 0;
@@ -1008,11 +1009,16 @@ static int modem_add(Manager *m, const char *path, sd_bus_message *message, sd_b
         if (r < 0)
                 return log_warning_errno(r, "Failed to initialize modem at %s, ignoring", path);
 
+        r = modem_match_properties_changed(modem, path);
+        if (r < 0)
+                return log_warning_errno(r, "Failed to match on properties changed at %s, ignoring", path);
+
         r = bus_message_map_all_properties(message, map, BUS_MAP_STRDUP, ret_error, modem);
         if (r < 0)
-                return log_warning_errno(r, "Failed to parse modem properties at %s, ignoring", path);
+                return log_warning_errno(r, "Failed to map properties at %s, ignoring", path);
 
-        return modem_match_properties_changed(modem, path);
+        modem->reconnect_state = MODEM_RECONNECT_SCHEDULED;
+        return modem_on_state_change(modem, MM_MODEM_STATE_UNKNOWN, MM_MODEM_STATE_FAILED_REASON_UNKNOWN);
 }
 
 static int modem_remove(Manager *m, const char *path) {
