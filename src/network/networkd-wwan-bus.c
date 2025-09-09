@@ -279,9 +279,8 @@ static int bus_message_check_properties(
         *found_cnt = 0;
 
         r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "{sv}");
-        if (r < 0) {
+        if (r < 0)
                 return bus_log_parse_error_debug(r);
-        }
 
         while ((r = sd_bus_message_enter_container(m, SD_BUS_TYPE_DICT_ENTRY, "sv")) > 0) {
                 const struct bus_properties_map *prop;
@@ -1111,14 +1110,10 @@ static int remove_modem(Manager *m, const char *path) {
 }
 
 static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_bus_error *ret_error) {
-        static const XMLIntrospectOps ops = {
-                .on_path = modems_save_path,
-        };
-
         Manager *manager = ASSERT_PTR(userdata);
         _cleanup_set_free_ Set *paths = NULL;
         const sd_bus_error *e;
-        const char *xml, *path;
+        const char *modem_path;
         int r;
 
         assert(message);
@@ -1126,25 +1121,51 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
         e = sd_bus_message_get_error(message);
         if (e) {
                 r = sd_bus_error_get_errno(e);
-                log_warning_errno(r, "Could not get modems: %s", bus_error_message(e, r));
+                log_warning_errno(r, "Could not get managed objects: %s", bus_error_message(e, r));
                 return 0;
         }
 
-        r = sd_bus_message_read(message, "s", &xml);
+        /* This is a{oa{sa{sv}}} with all the modems and their properties. */
+        r = sd_bus_message_enter_container(message, SD_BUS_TYPE_ARRAY, "{oa{sa{sv}}}");
+        if (r < 0)
+                return bus_log_parse_error_debug(r);
+
+        while ((r = sd_bus_message_enter_container(message, SD_BUS_TYPE_DICT_ENTRY, "oa{sa{sv}}")) > 0) {
+                r = sd_bus_message_read_basic(message, SD_BUS_TYPE_OBJECT_PATH, &modem_path);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+
+                log_info("ModemManager: modem found at %s", modem_path);
+
+                r = sd_bus_message_enter_container(message, SD_BUS_TYPE_ARRAY, "{sa{sv}}");
+                if (r < 0)
+                        return bus_log_parse_error(r);
+
+                while ((r = sd_bus_message_enter_container(message, SD_BUS_TYPE_DICT_ENTRY, "sa{sv}")) > 0) {
+                        const char *interface_name = NULL;
+                        assert_se(sd_bus_message_read_basic(message, 's', &interface_name) > 0);
+
+                        log_error("\tinterface name %s", interface_name);
+
+                        assert_se(sd_bus_message_skip(message, "a{sv}") >= 0);
+
+                        r = sd_bus_message_exit_container(message);
+                        if (r < 0)
+                                return bus_log_parse_error(r);
+                }
+
+                r = sd_bus_message_exit_container(message);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+                r = sd_bus_message_exit_container(message);
+                if (r < 0)
+                        return bus_log_parse_error(r);
+
+        }
+
+        r = sd_bus_message_exit_container(message);
         if (r < 0)
                 return bus_log_parse_error(r);
-
-        r = parse_xml_introspect("/org/freedesktop/ModemManager1/Modem", xml, &ops, &paths);
-        if (r < 0) {
-                log_warning_errno(r, "Failed to parse DBus introspect XML, ignoring: %m");
-                return 0;
-        }
-
-        SET_FOREACH(path, paths) {
-                r = enumerate_modem(manager, path);
-                if (r < 0)
-                        continue;
-        }
 
         return 0;
 }
@@ -1161,12 +1182,12 @@ static int enumerate_modems(Manager *manager) {
         r = sd_bus_call_method_async(manager->bus,
                                      NULL,
                                      "org.freedesktop.ModemManager1",
-                                     "/org/freedesktop/ModemManager1/Modem",
-                                     "org.freedesktop.DBus.Introspectable",
-                                     "Introspect",
+                                     "/org/freedesktop/ModemManager1",
+                                     "org.freedesktop.DBus.ObjectManager",
+                                     "GetManagedObjects",
                                      enumerate_modems_handler, manager, NULL);
         if (r < 0)
-                return log_error_errno(r, "Could not get modems: %m");
+                return log_error_errno(r, "Could not get managed objects: %m");
 
         return 0;
 }
