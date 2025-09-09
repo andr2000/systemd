@@ -828,7 +828,7 @@ static int modem_map_bearers_on_props(
                 sd_bus_error *error,
                 void *userdata) {
         Modem *modem = ASSERT_PTR(userdata);
-        char **paths = NULL, **path;
+        _cleanup_strv_free_ char **paths = NULL, **path;
         int r;
 
         log_info("ModemManager: bearers created at path %s", sd_bus_message_get_path(m));
@@ -873,23 +873,22 @@ static int modem_map_bearers_initial(
         return 0;
 }
 
-static int modem_parse_ports(sd_bus_message *m, Modem *modem) {
+static int modem_map_ports(
+                sd_bus *bus,
+                const char *member,
+                sd_bus_message *m,
+                sd_bus_error *error,
+                void *userdata) {
+        Modem *modem = ASSERT_PTR(userdata);
+        const char *port_name;
+        uint32_t port_type;
         int r;
 
-        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, "(su)");
+        r = sd_bus_message_enter_container(m, SD_BUS_TYPE_ARRAY, NULL);
         if (r < 0)
-                return bus_log_parse_error(r);
+                return bus_log_parse_error_debug(r);
 
-        for (;;) {
-                const char *port_name;
-                uint32_t port_type;
-
-                r = sd_bus_message_read(m, "(su)", &port_name, &port_type);
-                if (r < 0)
-                        return bus_log_parse_error(r);
-                if (r == 0)
-                        break;
-
+        while ((r = sd_bus_message_read(m, "(su)", &port_name, &port_type)) > 0) {
                 if (port_type == MM_MODEM_PORT_TYPE_NET) {
                         free(modem->port_name);
                         modem->port_name = strdup(port_name);
@@ -902,17 +901,6 @@ static int modem_parse_ports(sd_bus_message *m, Modem *modem) {
                 return bus_log_parse_error(r);
 
         return 0;
-}
-
-static int modem_map_ports(
-                sd_bus *bus,
-                const char *member,
-                sd_bus_message *m,
-                sd_bus_error *error,
-                void *userdata) {
-        Modem *modem = ASSERT_PTR(userdata);
-
-        return modem_parse_ports(m, modem);
 }
 
 static int modem_properties_changed_signal(
@@ -1050,8 +1038,6 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
 
         assert(message);
 
-//        sd_bus_message_dump(message, stdout, SD_BUS_MESSAGE_DUMP_WITH_HEADER);
-
         e = sd_bus_message_get_error(message);
         if (e) {
                 r = sd_bus_error_get_errno(e);
@@ -1082,12 +1068,8 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
 
                         if (streq("org.freedesktop.ModemManager1.Modem", interface_name)) {
                                 r = add_modem(manager, modem_path, message, ret_error);
-                                if (r < 0) {
-                                        log_error("Skip modem %s", modem_path);
-                                        r = sd_bus_message_skip(message, "a{sv}");
-                                        if (r < 0)
-                                                return bus_log_parse_error(r);
-                                }
+                                if (r < 0)
+                                        return bus_log_parse_error(r);
                         } else {
                                 r = sd_bus_message_skip(message, "a{sv}");
                                 if (r < 0)
@@ -1105,7 +1087,6 @@ static int enumerate_modems_handler(sd_bus_message *message, void *userdata, sd_
                 r = sd_bus_message_exit_container(message);
                 if (r < 0)
                         return bus_log_parse_error(r);
-
         }
 
         r = sd_bus_message_exit_container(message);
