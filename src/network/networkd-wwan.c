@@ -285,7 +285,7 @@ static int bearer_address_handler(
 
         assert(link);
 
-        r = address_configure_handler_internal(m, link, address);
+        r = address_configure_handler_internal(rtnl, m, link, "Could not set address provided by bearer");
         if (r <= 0)
                 return r;
 
@@ -347,7 +347,7 @@ static int bearer_route_handler(
 
         assert(link);
 
-        r = route_configure_handler_internal(m, req, route);
+        r = route_configure_handler_internal(rtnl, m, req, "Could not set gateway provided by bearer");
         if (r <= 0)
                 return r;
 
