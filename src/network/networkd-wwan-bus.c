@@ -681,7 +681,7 @@ static void modem_simple_connect(Modem *modem) {
         }
 
         /* Check if .network file found at all */
-        if (!link->state) {
+        if (!link->network) {
                 log_debug("ModemManager: no .network file provideded for %s", modem->port_name);
                 return;
         }
